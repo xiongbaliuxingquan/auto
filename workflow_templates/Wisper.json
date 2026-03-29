@@ -1,0 +1,39 @@
+{
+  "13": {
+    "inputs": {
+      "model": "large-v3",
+      "language": "auto",
+      "prompt": "",
+      "audio": [
+        "14",
+        0
+      ]
+    },
+    "class_type": "Apply Whisper",
+    "_meta": {
+      "title": "Apply Whisper"
+    }
+  },
+  "14": {
+    "inputs": {
+      "audio": "中年干练连珠炮.mp3",
+      "audioUI": "/api/view?filename=%E4%B8%AD%E5%B9%B4%E5%B9%B2%E7%BB%83%E8%BF%9E%E7%8F%A0%E7%82%AE.mp3&type=input&subfolder=&rand=0.2321038183519878"
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "加载音频"
+    }
+  },
+  "36": {
+    "inputs": {
+      "text": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "ShowText|pysssss",
+    "_meta": {
+      "title": "Show Text 🐍"
+    }
+  }
+}

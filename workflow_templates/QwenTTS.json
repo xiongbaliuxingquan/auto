@@ -1,0 +1,46 @@
+{
+  "5": {
+    "inputs": {
+      "text": "同志们，我问你个问题——\n\n日本曾经多牛？索尼买下哥伦比亚，三菱买下洛克菲勒中心，一本书叫《日本可以说不》，底气足得很。\n\n现在呢？年轻人变成“食草男”，不恋爱、不结婚、不生孩子。三十年“低欲望社会”，国家像一潭死水。\n\n一个能对世界说“不”的国家，怎么变成连恋爱都不想谈的社会？\n\n答案不在东京，在中国宋朝的“众文轻武”里。\n\n今天这期，我带你用华夏史的眼睛，看透日本。\n",
+      "instruct": "语速很快，中年男性，声音干练，",
+      "language": "Chinese",
+      "model": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "TDQwen3TTSVoiceDesign",
+    "_meta": {
+      "title": "TD Qwen3 TTS Voice Design"
+    }
+  },
+  "6": {
+    "inputs": {
+      "model_path": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+      "precision": "bf16",
+      "device": "cuda",
+      "attn_implementation": "sdpa",
+      "auto_download": false,
+      "download_source": "ModelScope"
+    },
+    "class_type": "TDQwen3TTSModelLoader",
+    "_meta": {
+      "title": "TD Qwen3 TTS Model Loader"
+    }
+  },
+  "7": {
+    "inputs": {
+      "filename_prefix": "audio/ComfyUI",
+      "quality": "320k",
+      "audioUI": "/api/view?filename=ComfyUI_00079_.mp3&type=output&subfolder=audio&rand=0.9280097444072769",
+      "audio": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "SaveAudioMP3",
+    "_meta": {
+      "title": "保存音频 (MP3)"
+    }
+  }
+}

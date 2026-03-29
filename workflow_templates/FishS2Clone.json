@@ -1,0 +1,66 @@
+{
+  "12": {
+    "inputs": {
+      "model_path": "s2-pro",
+      "text": [
+        "26",
+        0
+      ],
+      "language": "zh",
+      "device": "cuda",
+      "precision": "bfloat16",
+      "attention": "sage_attention",
+      "max_new_tokens": 0,
+      "chunk_length": 200,
+      "temperature": 0.8,
+      "top_p": 0.9,
+      "repetition_penalty": 1.1,
+      "seed": 50343001,
+      "keep_model_loaded": false,
+      "compile_model": false,
+      "reference_text": "",
+      "reference_audio": [
+        "14",
+        0
+      ]
+    },
+    "class_type": "FishS2VoiceCloneTTS",
+    "_meta": {
+      "title": "Fish S2 Voice Clone TTS"
+    }
+  },
+  "14": {
+    "inputs": {
+      "audio": "中年干练连珠炮.mp3",
+      "audioUI": "/api/view?filename=%E4%B8%AD%E5%B9%B4%E5%B9%B2%E7%BB%83%E8%BF%9E%E7%8F%A0%E7%82%AE.mp3&type=input&subfolder=&rand=0.26615088027953304"
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "加载音频"
+    }
+  },
+  "26": {
+    "inputs": {
+      "positive": "[confident] 同志们，我问你个问题——[inhale] 美国为什么能把全世界收割一遍，却把自己收割成“铁锈带”“丧尸城”？[inhale] [sarcastic] 答案不在华尔街，在中国两千年前的盐铁论里。[laugh] 没想到吧？[inhale] 今天这期，我带你用华夏史的眼睛，看透美国。[inhale] 先看现象。[inhale] [happy] 美元是全世界最牛的货币，印一张纸，全世界买单。华尔街赚翻了，硅谷牛了，好莱坞爽了。[inhale] [sad] 但美国老百姓呢？[inhale] 2008年金融危机，四百万人丢了房子。2025年，一个美国护士发帖说：“我每天工作十二小时，吃不起午饭。我每天中午吃药，让自己不饿。”[inhale] [angry] 铁锈带——曾经汽车之城底特律，现在一片废墟。工厂搬走了，资本赚了，城市死了，工人失业了。[inhale] 为什么？因为美国把金融玩成了“脱实向虚”。钱去了股市、楼市、衍生品，就是不流向制造业。中产消失了，贫富差距炸了。[inhale] [serious] 这叫“美元霸权陷阱”——美元救了美国，也杀了美国。"
+    },
+    "class_type": "easy positive",
+    "_meta": {
+      "title": "正面提示词"
+    }
+  },
+  "29": {
+    "inputs": {
+      "filename_prefix": "audio/FishComfyUI",
+      "quality": "320k",
+      "audioUI": "",
+      "audio": [
+        "12",
+        0
+      ]
+    },
+    "class_type": "SaveAudioMP3",
+    "_meta": {
+      "title": "保存音频 (MP3)"
+    }
+  }
+}

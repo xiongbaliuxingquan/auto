@@ -1,0 +1,289 @@
+{
+  "71": {
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "加载CLIP"
+    }
+  },
+  "72": {
+    "inputs": {
+      "text": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走，裸露，NSFW",
+      "clip": [
+        "71",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "73": {
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "加载VAE"
+    }
+  },
+  "74": {
+    "inputs": {
+      "width": 480,
+      "height": 832,
+      "length": [
+        "114",
+        0
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyHunyuanLatentVideo",
+    "_meta": {
+      "title": "空Latent视频（Hunyuan）"
+    }
+  },
+  "75": {
+    "inputs": {
+      "unet_name": "Wan/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "UNet加载器"
+    }
+  },
+  "76": {
+    "inputs": {
+      "unet_name": "Wan/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "UNet加载器"
+    }
+  },
+  "78": {
+    "inputs": {
+      "add_noise": "disable",
+      "noise_seed": 0,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 2,
+      "end_at_step": 4,
+      "return_with_leftover_noise": "disable",
+      "model": [
+        "86",
+        0
+      ],
+      "positive": [
+        "89",
+        0
+      ],
+      "negative": [
+        "72",
+        0
+      ],
+      "latent_image": [
+        "81",
+        0
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "K采样器（高级）"
+    }
+  },
+  "81": {
+    "inputs": {
+      "add_noise": "enable",
+      "noise_seed": 327987635783426,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 0,
+      "end_at_step": 2,
+      "return_with_leftover_noise": "enable",
+      "model": [
+        "82",
+        0
+      ],
+      "positive": [
+        "89",
+        0
+      ],
+      "negative": [
+        "72",
+        0
+      ],
+      "latent_image": [
+        "74",
+        0
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "K采样器（高级）"
+    }
+  },
+  "82": {
+    "inputs": {
+      "shift": 5.000000000000001,
+      "model": [
+        "83",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "采样算法（SD3）"
+    }
+  },
+  "83": {
+    "inputs": {
+      "lora_name": "Wan/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+      "strength_model": 1.0000000000000002,
+      "model": [
+        "75",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoRA加载器（仅模型）"
+    }
+  },
+  "85": {
+    "inputs": {
+      "lora_name": "Wan/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+      "strength_model": 1.0000000000000002,
+      "model": [
+        "76",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoRA加载器（仅模型）"
+    }
+  },
+  "86": {
+    "inputs": {
+      "shift": 5.000000000000001,
+      "model": [
+        "85",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "采样算法（SD3）"
+    }
+  },
+  "87": {
+    "inputs": {
+      "samples": [
+        "78",
+        0
+      ],
+      "vae": [
+        "73",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE解码"
+    }
+  },
+  "89": {
+    "inputs": {
+      "text": "[SHOT 1 - 0-3 seconds] Medium shot of a Song Dynasty ancient Chinese city tower in ink wash painting style. A blood-stained emperor in battle armor stands at the tower battlement, his robe heavily soaked in blood, wounds visible, expression fierce and determined. Blood drips from the battlements; faint ink outlines of fallen soldiers and broken weapons are scattered at the tower base. He grips a large imperial yellow battle flag with both hands, the flag featuring embroidered golden dragons. In the misty background, shadowy masses of enemy troops and siege ladders are faintly visible. [SHOT 2 - 3-6 seconds] Close-up as he forcefully plants the flag into the tower battlement. The imperial yellow banner with its golden dragon motif unfurls dramatically in the wind, the bright yellow and gold contrasting against the monochrome ink background. Blood splatters from his armor as he moves. A deep, powerful drumbeat strikes exactly as the flag is planted, and simultaneously, a thunderous roar of soldiers' cheers erupts from behind the walls, morale soaring. [SHOT 3 - 6-8 seconds] Camera slowly pulls back to medium-wide shot, revealing the emperor standing firm at the tower, one hand on the flagpole, the other on his sword, gazing defiantly toward the distant enemy lines. The dragon-adorned flag waves proudly above him, and the continuous roar of soldiers' battle cries fills the air. A sustained, resonant guqin note rings out as the scene holds, conveying the spirit of victory. Vertical composition, 9:16 aspect ratio. Chinese ink wash aesthetic, rice paper texture, ink diffusion, dry brush strokes, abundant negative space, grayscale dominant with imperial yellow and gold accents. Slow-motion effect throughout. No modern elements, no oversaturated colors, no CGI rendering, no text, no subtitles, no caption, no watermark, no logo, no signature, no branding, no flicker, no blurry, no low quality, no pixelated, no grainy, no jittery motion, no face warp, no distorted face, no bad hands, no extra limbs, no cartoon, no anime, no 3d render, no UI, no overlay, no timestamp, no QR code, no artifact, no glitch, no motion artifacts.",
+      "clip": [
+        "71",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "114": {
+    "inputs": {
+      "expression": "a*b+1",
+      "a": [
+        "116",
+        0
+      ],
+      "b": [
+        "117",
+        0
+      ]
+    },
+    "class_type": "MathExpression|pysssss",
+    "_meta": {
+      "title": "数学表达式"
+    }
+  },
+  "115": {
+    "inputs": {
+      "output": "",
+      "input": [
+        "114",
+        0
+      ]
+    },
+    "class_type": "Display Int (rgthree)",
+    "_meta": {
+      "title": "显示整数"
+    }
+  },
+  "116": {
+    "inputs": {
+      "Number": "10"
+    },
+    "class_type": "Int",
+    "_meta": {
+      "title": "秒数"
+    }
+  },
+  "117": {
+    "inputs": {
+      "Number": "25"
+    },
+    "class_type": "Int",
+    "_meta": {
+      "title": "帧数"
+    }
+  },
+  "118": {
+    "inputs": {
+      "frame_rate": 25,
+      "loop_count": 0,
+      "filename_prefix": "AnimateDiff",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "87",
+        0
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "合并为视频"
+    }
+  }
+}

@@ -1,0 +1,61 @@
+├── concurrent_utils.py              # 并发处理工具函数
+├── gui_launcher.py                 # 主控台图形界面（核心入口）
+├── gui_log.txt                     # GUI日志文件
+├── import_log.txt                  # 导入日志文件
+├── input.json                      # 输入JSON示例
+├── snapshot.py                     # 项目快照生成脚本
+├── user_settings.json              # 用户设置文件
+├── workflow_config.json            # 工作流配置
+├── core/核心模块
+│   ├── __init__.py                 # 模块初始化
+│   ├── txt_to_json.py              # 文本转结构化JSON（支持并发分块）
+│   ├── auto_split_deepseek.py      # 根据JSON生成分镜设计和提示词
+│   ├── extract_prompts.py          # 从分镜文件提取提示词并翻译
+│   ├── comfyui_manager.py          # ComfyUI API管理器（视频生成）
+│   ├── refine_shots_by_srt.py      # 根据SRT字幕优化镜头时长
+│   └── generate_first_frame_prompts.py  # 生成首帧提示词
+├── gui/图形界面模块
+│   ├── __init__.py                 # 模块初始化
+│   ├── ui_components.py            # UI组件（日志文本框、进度条）
+│   ├── step_manager.py             # 步骤管理器（协调处理流程）
+│   ├── workflow_executor.py        # 工作流执行器
+│   ├── countdown_timer.py          # 倒计时管理器
+│   ├── settings_dialog.py          # 参数设置对话框
+│   ├── shot_editor.py              # 镜头编辑器（选择/编辑提示词）
+│   ├── prompt_editor.py            # 提示词编辑器（全局优化）
+│   └── preset_manager.py           # 人设卡管理窗口
+├── parsers/文本解析器
+│   ├── __init__.py                 # 模块初始化
+│   ├── base_parser.py              # 解析器基类
+│   ├── story_parser.py             # 情感故事解析器
+│   ├── analysis_parser.py          # 文明结构解析器
+│   ├── mime_parser.py              # 动画默剧解析器
+│   ├── ai_response_cleaner.py      # AI响应清洗工具
+│   └── ai_response_debug.json      # AI响应调试数据
+├── utils/ 工具模块
+│   ├── __init__.py                 # 模块初始化
+│   ├── config_manager.py           # 配置管理器（API密钥、设置）
+│   ├── settings.py                 # 并发参数设置
+│   ├── concurrent_utils.py         # 并发处理工具
+│   ├── process_runner.py           # 子进程运行器
+│   ├── subtitle_utils.py           # 字幕文件解析工具
+│   ├── translation_utils.py        # 翻译工具（调用DeepSeek API）
+│   ├── system_doctor.py            # 系统诊断工具
+│   ├── config.json                 # API配置
+│   └── user_settings.json          # 用户设置（副本）
+├── prompt_presets/预设文件
+│   ├── emotional_default.txt       # 情感故事人设卡预设
+│   ├── civil_default.txt           # 文明结构人设卡预设
+│   ├── mime_default.txt            # 动画默剧人设卡预设
+│   └── mime2.txt                   # 动画默剧备用预设
+├── workflow_templates/工作流模板
+│   ├── __init__.py                 # 模块初始化
+│   ├── LTX2.3文生API.json          # LTX2.3文生视频工作流
+│   └── video_wan2_2_14B_t2v.json   # WAN2.2文生视频工作流
+├── examples/示例文件
+│   ├── __init__.py                 # 模块初始化
+│   ├── 更新记录.txt                # 文件功能对照表
+│   └── 测试.txt                    # 测试文本
+├── tools/ 工具目录
+│   └── ffmpeg/
+│       └── LICENSE.txt             # FFmpeg许可证文件

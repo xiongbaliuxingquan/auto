@@ -1,0 +1,6 @@
+# gui/audio/__init__.py
+"""
+音频面板模块
+包含段落列表、音频生成、重录队列、播放控制等子组件。
+"""
+from .main_panel import AudioPanel

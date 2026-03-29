@@ -1,0 +1,12 @@
+{
+  "GLOBAL_THRESHOLD": 2000,
+  "CHUNK_SIZE": 300,
+  "MAX_WORKERS": 8,
+  "COMFYUI_API_URL": "https://u882129-77385c05457d.bjb2.seetacloud.com:8443",
+  "VIDEO_OUTPUT_BASE_DIR": "D:/05\u81ea\u52a8\u5316\u6d41\u7a0b/deepseek\u811a\u672c\u81ea\u52a8\u531603221859/output",
+  "OUTPUT_ROOT_DIR": "D:/05\u81ea\u52a8\u5316\u6d41\u7a0b/deepseek\u811a\u672c\u81ea\u52a8\u531603221859/output",
+  "MAX_RETRIES": 3,
+  "RETRY_DELAY": 5,
+  "API_TIMEOUT": 120,
+  "BATCH_SIZE": 1
+}

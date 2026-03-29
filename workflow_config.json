@@ -1,0 +1,17 @@
+{
+  "LTX2.3": {
+    "prompt_node": "188",
+    "resolution_node": "192",
+    "sampler_node": "195",
+    "output_node": "198",
+    "frame_count_node": "166",
+    "notes": "提示词节点188 (TextGenerateLTX2Prompt), 分辨率节点192 (EmptyImage), 采样器节点195 (只改种子), 输出节点198 (VHS_VideoCombine, 可能输出gif),总帧数节点166"
+  },
+  "WAN2.2": {
+    "prompt_node": "",
+    "resolution_node": "",
+    "sampler_node": "",
+    "output_node": "",
+    "notes": "WAN2.2 模板尚未配置，请根据实际模板填写节点ID"
+  }
+}

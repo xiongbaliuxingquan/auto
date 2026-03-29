@@ -1,0 +1,7 @@
+# 忽略整个文件夹（末尾加斜杠）
+output/
+logs/
+__pycache__/
+__init__/
+tools/
+venv*/
