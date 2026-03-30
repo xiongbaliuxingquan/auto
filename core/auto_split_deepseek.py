@@ -78,6 +78,45 @@ PROMPT_TEMPLATE = """
 以下是需要处理的镜头（本次共 {total_shots_in_batch} 个镜头，属于 {len} 个分镜头）：
 """
 
+def parse_shot_block(block, shot_id, default_script=""):
+    """解析单个镜头的文本块，返回结构化字典"""
+    lines = block.strip().split('\n')
+    shot = {
+        'id': shot_id,
+        'title': '',
+        'duration': 0.0,
+        'emotion': '',
+        'script': default_script,
+        'design': '',
+        'prompt': ''
+    }
+    # 提取标题
+    header_match = re.match(r'【镜头[\d-]+：([^】]+)】', lines[0].strip())
+    if header_match:
+        shot['title'] = header_match.group(1).strip()
+    # 遍历行，提取字段
+    for line in lines[1:]:
+        line = line.strip()
+        if line.startswith('- 时长：'):
+            match = re.search(r'([\d.]+)', line)
+            if match:
+                shot['duration'] = float(match.group(1))
+        elif line.startswith('- 情绪基调：'):
+            shot['emotion'] = line.split('：', 1)[-1].strip()
+        elif line.startswith('- 口播稿：'):
+            shot['script'] = line.split('：', 1)[-1].strip()
+        elif line.startswith('- 分镜设计：'):
+            shot['design'] = line.split('：', 1)[-1].strip()
+        elif line.startswith('- 提示词：'):
+            shot['prompt'] = line.split('：', 1)[-1].strip()
+        elif not line.startswith('-') and shot['prompt']:
+            # 提示词跨行，追加
+            shot['prompt'] += ' ' + line
+        elif not line.startswith('-') and shot['design']:
+            # 分镜设计跨行
+            shot['design'] += ' ' + line
+    return shot
+
 def call_deepseek(prompt, shot_ids=None, max_retries=3, retry_delay=2):
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
@@ -129,19 +168,19 @@ def call_deepseek(prompt, shot_ids=None, max_retries=3, retry_delay=2):
 def process_batch(batch_segments, batch_index, persona_text):
     """
     batch_segments: 一个列表，包含本次要处理的分镜头，每个元素是一个分镜头（包含其所有子镜头）
+    返回 (text_block, shot_dicts)
     """
     prompt = f"""{persona_text}
 
 {PROMPT_TEMPLATE.format(total_shots_in_batch=sum(len(seg['shots']) for seg in batch_segments), len=len(batch_segments))}
 """
-    # 收集所有镜头ID用于日志
     shot_ids = []
-    shot_scripts = {}   # 新增
+    shot_scripts = {}
     for seg in batch_segments:
         for i, shot in enumerate(seg['shots'], start=1):
             shot_id = f"{seg['id']}-{i}"
             shot_ids.append(shot_id)
-            shot_scripts[shot_id] = shot.get('script', '')   # 新增
+            shot_scripts[shot_id] = shot.get('script', '')
             region = shot.get('region', '全球')
             prompt += f"""
             【镜头{seg['id']}-{i}：{seg['title']}】
@@ -156,16 +195,15 @@ def process_batch(batch_segments, batch_index, persona_text):
         # 清洗结果中的分号
         result = result.replace('；', ',').replace(';', ',')
 
-        # 插入口播稿
+        # 解析所有镜头块
         blocks = re.split(r'\n\s*={5,}\s*\n', result.strip())
-        new_blocks = []
+        shot_dicts = []
         for idx, block in enumerate(blocks):
             if idx >= len(shot_ids):
-                new_blocks.append(block)
                 continue
             shot_id = shot_ids[idx]
             script = shot_scripts.get(shot_id, '')
-            # 在块中插入口播稿行
+            # 在块中插入口播稿（为了解析时能拿到）
             lines = block.split('\n')
             new_lines = []
             inserted = False
@@ -176,10 +214,26 @@ def process_batch(batch_segments, batch_index, persona_text):
                     inserted = True
             if not inserted:
                 new_lines.append(f'- 口播稿：{script}')
-            new_blocks.append('\n'.join(new_lines))
-        result = '\n===========================\n'.join(new_blocks)
+            block = '\n'.join(new_lines)
 
-        return result
+            # 解析为结构化数据
+            shot = parse_shot_block(block, shot_id, default_script=script)
+            shot_dicts.append(shot)
+
+        # 重新组装文本块（保持原格式）
+        new_blocks = []
+        for shot in shot_dicts:
+            block_text = f"""【镜头{shot['id']}：{shot['title']}】
+- 时长：{shot['duration']:.1f}秒
+- 情绪基调：{shot['emotion']}
+- 口播稿：{shot['script']}
+- 分镜设计：{shot['design']}
+- 提示词：{shot['prompt']}"""
+            new_blocks.append(block_text)
+        text_block = '\n===========================\n'.join(new_blocks)
+
+        return text_block, shot_dicts
+
     except Exception as e:
         error_msg = f"ERROR: 批次 {batch_index+1} (镜头 {', '.join(shot_ids)}) 处理失败: {str(e)}\n"
         error_msg += f"Prompt 预览: {prompt[:200]}..."
@@ -189,16 +243,29 @@ def process_batch(batch_segments, batch_index, persona_text):
 
         # 生成后备镜头文本块（基于原始数据）
         fallback_blocks = []
+        fallback_dicts = []
         for seg in batch_segments:
             for i, shot in enumerate(seg['shots'], start=1):
                 shot_id = f"{seg['id']}-{i}"
                 fallback = f"""【镜头{shot_id}：{seg['title']}】
 - 时长：{shot['duration']:.1f}秒
 - 情绪基调：{shot['emotion']}
+- 口播稿：{shot.get('script', '')}
 - 分镜设计：AI生成失败，使用原始视觉描述：{shot['visual']}
 - 提示词：{shot['visual']}"""
                 fallback_blocks.append(fallback)
-        return '\n\n===========================\n\n'.join(fallback_blocks)
+                # 构建后备字典
+                fallback_dicts.append({
+                    'id': shot_id,
+                    'title': seg['title'],
+                    'duration': shot['duration'],
+                    'emotion': shot['emotion'],
+                    'script': shot.get('script', ''),
+                    'design': f"AI生成失败，使用原始视觉描述：{shot['visual']}",
+                    'prompt': shot['visual']
+                })
+        text_block = '\n\n===========================\n\n'.join(fallback_blocks)
+        return text_block, fallback_dicts
 
 def progress_callback(idx, result, success):
     if success:
@@ -387,13 +454,92 @@ if __name__ == "__main__":
     print("开始并发处理批次...")
     sys.stdout.flush()
     items = [(batch, idx, persona_text) for idx, batch in enumerate(batches)]
-    results, errors = concurrent_utils.concurrent_process(
-        items,
-        lambda item, _: process_batch(item[0], item[1], item[2]),
-        max_workers=settings.MAX_WORKERS,
-        ordered=True,
-        progress_callback=progress_callback
-    )
+    # 收集所有镜头的结构化数据
+    all_shot_data = []
+    for i, res in enumerate(results):
+        if res is None:
+            continue
+        text_block, shot_dicts = res
+        all_shot_data.extend(shot_dicts)
+
+    # 检查六元素完整性并补全
+    missing_report = []
+    # 为了补全，需要从原始 segments 中获取视觉描述等
+    # 先构建一个映射：shot_id -> 原始视觉描述、时长等
+    original_map = {}
+    for seg in segments:
+        for j, shot in enumerate(seg['shots'], start=1):
+            shot_id = f"{seg['id']}-{j}"
+            original_map[shot_id] = {
+                'visual': shot.get('visual', ''),
+                'duration': shot.get('duration', 10.0),
+                'emotion': shot.get('emotion', ''),
+                'script': shot.get('script', '')
+            }
+
+    for shot in all_shot_data:
+        missing = []
+        if not shot['title']:
+            missing.append('标题')
+        if shot['duration'] == 0.0:
+            missing.append('时长')
+        if not shot['emotion']:
+            missing.append('情绪基调')
+        if not shot['script']:
+            missing.append('口播稿')
+        if not shot['design']:
+            missing.append('分镜设计')
+        if not shot['prompt']:
+            missing.append('提示词')
+        if missing:
+            missing_report.append(f"{shot['id']} 缺少: {', '.join(missing)}")
+            # 补全缺失字段（从原始数据）
+            orig = original_map.get(shot['id'], {})
+            if shot['duration'] == 0.0:
+                shot['duration'] = orig.get('duration', 10.0)
+            if not shot['emotion']:
+                shot['emotion'] = orig.get('emotion', '中性')
+            if not shot['script']:
+                shot['script'] = orig.get('script', '')
+            if not shot['design']:
+                # 用视觉描述作为后备
+                shot['design'] = f"AI生成失败，使用原始视觉描述：{orig.get('visual', '无')}"
+            if not shot['prompt']:
+                shot['prompt'] = orig.get('visual', '默认提示词')
+    if missing_report:
+        print("六元素检查发现缺失：")
+        for msg in missing_report:
+            print(msg)
+        print("已用原始数据或默认值补全，请检查最终文件。")
+        sys.stdout.flush()
+
+    # 保存 JSON 结果（可选，保留原逻辑）
+    timestamp = datetime.now().strftime("%m%d_%H%M")
+    output_file = os.path.join(output_dir, f"output_{timestamp}.json")
+    # 这里可以保存 all_shot_data 或其他，但原逻辑是保存 batch 信息，我们保持原样，但添加一个 shot_data 副本
+    # 原 JSON 保存代码不变，我们额外保存一个 shot_data.json 用于调试
+    shot_data_file = os.path.join(output_dir, f"shot_data_{timestamp}.json")
+    with open(shot_data_file, 'w', encoding='utf-8') as f:
+        json.dump(all_shot_data, f, ensure_ascii=False, indent=2)
+    print(f"镜头结构化数据已保存至 {shot_data_file}")
+    sys.stdout.flush()
+
+    # 生成易读版分镜文件（基于结构化数据）
+    def format_shot(shot):
+        return f"""【镜头{shot['id']}：{shot['title']}】
+- 时长：{shot['duration']:.1f}秒
+- 情绪基调：{shot['emotion']}
+- 口播稿：{shot['script']}
+- 分镜设计：{shot['design']}
+- 提示词：{shot['prompt']}"""
+
+    readable_parts = [format_shot(shot) for shot in all_shot_data]
+    readable_file = os.path.join(output_dir, f"分镜结果_易读版_{timestamp}.txt")
+    with open(readable_file, 'w', encoding='utf-8') as f:
+        f.write('\n\n===========================\n\n'.join(readable_parts))
+    print(f"易读版已生成：{readable_file}")
+    sys.stdout.flush()
+    
     if errors:
         for idx, err in errors.items():
             log_error('auto_split_deepseek', f'批次{idx+1}并发失败', err)
