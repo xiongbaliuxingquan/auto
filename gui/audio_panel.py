@@ -30,6 +30,8 @@ from core.audio.subtitle import SubtitleGenerator
 from core.audio.reference import ReferenceAudioManager
 from core.audio.generation import AudioGenerationController
 from gui.tts_tutorial import TUTORIAL_CONTENT
+from core.audio.segment_labeler import SegmentLabeler
+from core.audio.final_combine import FinalAudioCombine
 
 # 尝试导入 pygame 用于播放
 try:
@@ -328,6 +330,7 @@ class AudioPanel(ttk.Frame):
         self.subtitle_generator = SubtitleGenerator(work_dir, log_callback=self.log)
         self.reference_manager = ReferenceAudioManager(work_dir, log_callback=self.log)
         self.segment_labeler = SegmentLabeler(work_dir, log_callback=self.log)
+        self.final_combiner = FinalAudioCombine(work_dir, log_callback=self.log)
         self.ref_audio_path.set(self.reference_manager.get_ref_audio_path() or "")
         self.ref_audio_filename = self.reference_manager.get_ref_audio_filename()
         self.ref_text = self.reference_manager.get_ref_text()
@@ -716,14 +719,33 @@ class AudioPanel(ttk.Frame):
         text_widget.insert('1.0', TUTORIAL_CONTENT)
         text_widget.config(state='disabled')
         ttk.Button(win, text="关闭", command=win.destroy).pack(pady=5)
-    def _generate_segments_async(self):
-        try:
-            full_text = "\n\n".join(self.paragraphs)
-            temp_script_path = os.path.join(self.work_dir, "temp_script.txt")
-            with open(temp_script_path, 'w', encoding='utf-8') as f:
-                f.write(full_text)
-            from core.audio_labeler import label_audio
-            segments = label_audio(self.work_dir, temp_script_path)
+
+    def generate_segments_manual(self):
+        if not self.work_dir:
+            messagebox.showerror("错误", "请先设置工作目录")
+            return
+        if not self.paragraphs and not self.has_labeled_segments:
+            messagebox.showerror("错误", "未加载段落，请先执行段落分割")
+            return
+
+        if self.has_labeled_segments:
+            answer = messagebox.askyesno("确认", "已有润色后的段落，重新润色将覆盖现有音频片段，是否继续？\n")
+            if not answer:
+                return
+            # 删除旧文件
+            labeled_path = os.path.join(self.work_dir, "labeled_text.txt")
+            json_path = os.path.join(self.work_dir, "segments_info.json")
+            if os.path.exists(labeled_path):
+                os.remove(labeled_path)
+            if os.path.exists(json_path):
+                os.remove(json_path)
+            self.has_labeled_segments = False
+            self.gen_seg_btn.config(text="段落自动润色")
+            self.load_paragraphs(self.work_dir)
+
+        self.log("正在对段落进行润色和切分，请稍候...")
+
+        def on_complete(segments):
             if segments:
                 self.app.root.after(0, self.load_segments_from_json)
                 self.app.root.after(0, lambda: self.log("段落润色完成"))
@@ -731,9 +753,8 @@ class AudioPanel(ttk.Frame):
                 self.app.root.after(0, lambda: self.gen_seg_btn.config(text="重新润色"))
             else:
                 self.app.root.after(0, lambda: self.log("段落润色失败"))
-        except Exception as e:
-            self.app.root.after(0, lambda: self.log(f"段落润色异常: {e}"))
 
+        self.segment_labeler.generate_segments(self.paragraphs, on_complete)
     def load_segments_from_json(self):
         json_path = os.path.join(self.work_dir, "segments_info.json")
         if not os.path.exists(json_path):
@@ -1133,66 +1154,14 @@ class AudioPanel(ttk.Frame):
         if not confirmed:
             self.log("没有已确认的片段，无法合成")
             return
-        concat_file = os.path.join(self.work_dir, "concat.txt")
-        with open(concat_file, 'w', encoding='utf-8') as f:
-            for seg in confirmed:
-                audio_file = seg['audio_file']
-                if not audio_file:
-                    self.log(f"警告：片段 {seg.get('index')} 没有音频文件，跳过")
-                    continue
-                audio_file = audio_file.replace('\\', '/')
-                if not os.path.exists(audio_file):
-                    self.log(f"警告：音频文件不存在 {audio_file}，跳过")
-                    continue
-                rel_path = os.path.relpath(audio_file, self.work_dir).replace('\\', '/')
-                print(f"[DEBUG] 写入 concat 相对路径: {rel_path}")
-                f.write(f"file '{rel_path}'\n")
-        final_audio = os.path.join(self.work_dir, "final_audio.mp3")
-        cmd = [str(FFMPEG), '-y', '-f', 'concat', '-safe', '0', '-i', 'concat.txt', '-ar', '16000', '-c:a', 'libmp3lame', '-b:a', '128k', 'final_audio.mp3']
-        self.log("正在合成最终音频（ffmpeg），请稍候...")
-        try:
-            process = subprocess.Popen(
-                cmd,
-                cwd=self.work_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                encoding='utf-8',
-                errors='replace',
-                bufsize=1
-            )
-            for line in process.stdout:
-                self.log(line.rstrip())
-            process.wait()
-            if process.returncode == 0:
-                self.log(f"最终音频已保存: {final_audio}")
-                self.generate_timeline(confirmed, final_audio)
-                self.after(0, lambda: self.final_audio_status.set("已生成"))
-                self.after(0, lambda: self.final_play_btn.config(state='normal'))
-            else:
-                self.log(f"ffmpeg 合成失败，返回码: {process.returncode}")
-        except Exception as e:
-            self.log(f"合成异常: {e}")
+        self.final_combiner.combine(confirmed, self._on_combine_done)
 
-    def generate_timeline(self, confirmed_segments, final_audio_path):
-        timeline = []
-        total_ms = 0
-        for seg in confirmed_segments:
-            duration_ms = int(seg['duration'] * 1000)
-            timeline.append({
-                "index": seg['index'],
-                "text": seg['text'],
-                "start_ms": total_ms,
-                "end_ms": total_ms + duration_ms,
-                "duration_ms": duration_ms,
-                "file": os.path.basename(seg['audio_file'])
-            })
-            total_ms += duration_ms
-        timeline_path = os.path.join(self.work_dir, "audio_timeline.json")
-        with open(timeline_path, 'w', encoding='utf-8') as f:
-            json.dump(timeline, f, ensure_ascii=False, indent=2)
-        self.log(f"时间轴已保存: {timeline_path}")
-        self.log("全部完成！")
-
+    def _on_combine_done(self, success, final_audio_path):
+        if success:
+            self.final_audio_status.set("已生成")
+            self.final_play_btn.config(state='normal')
+        else:
+            self.log("最终音频合成失败")
     def stop_generation(self):
         if self.gen_controller:
             self.gen_controller.cancel_all()
