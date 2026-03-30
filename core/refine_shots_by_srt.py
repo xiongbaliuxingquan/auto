@@ -387,20 +387,6 @@ def main(work_dir):
         json.dump(mapping, f, ensure_ascii=False, indent=2)
     log_print(f"镜头段落映射已保存至 {map_path}")
 
-    # 生成字幕映射文件（shot_subtitle_map.json）
-    map_path = os.path.join(work_dir, 'shot_subtitle_map.json')
-    shot_map = []
-    for idx, shot in enumerate(all_shots, start=1):
-        shot_map.append({
-            "shot_id": f"1-{idx}",
-            "start_ms": shot['start_ms'],
-            "end_ms": shot['end_ms'],
-            "target_duration_ms": int(shot['duration'] * 1000)
-        })
-    with open(map_path, 'w', encoding='utf-8') as f:
-        json.dump(shot_map, f, ensure_ascii=False, indent=2)
-    log_print(f"字幕映射文件已生成 {map_path}")
-
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("用法: python refine_shots_by_srt.py <工作目录>")
