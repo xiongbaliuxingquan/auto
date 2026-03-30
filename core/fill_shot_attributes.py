@@ -152,12 +152,23 @@ def main():
 
     # 写入最终文件
     write_shots(output_shots, updated_shots)
+    # 生成 shot_subtitle_map.json
+    work_dir = os.path.dirname(output_shots)  # 获取工作目录
+    map_path = os.path.join(work_dir, 'shot_subtitle_map.json')
+    shot_map = []
+    for shot in updated_shots:
+        # 注意：updated_shots 中需要包含 start_ms, end_ms 时间信息
+        # 如果当前没有这些字段，需要从其他来源获取（见下文说明）
+        shot_map.append({
+            "shot_id": shot['id'],  # 此时 shot['id'] 已是正确的 "段落-镜头" 格式，如 "1-1"、"2-1" 等[3]
+            "start_ms": shot.get('start_ms', 0),  # 需要确保有这个字段
+            "end_ms": shot.get('end_ms', 0),      # 需要确保有这个字段
+            "target_duration_ms": int(shot['duration'] * 1000)  # duration 字段已有
+        })
+    with open(map_path, 'w', encoding='utf-8') as f:
+        json.dump(shot_map, f, ensure_ascii=False, indent=2)
+    print(f"字幕映射文件已生成 {map_path}")
     print(f"完成，最终镜头数: {len(updated_shots)}，已保存至 {output_shots}")
-
-    # 可选：生成权威易读版文件（固定文件名）
-    readable_final = os.path.join(os.path.dirname(output_shots), "分镜结果_易读版_最终.txt")
-    shutil.copy2(output_shots, readable_final)
-    print(f"已生成权威易读版分镜文件至 {readable_final}")
 
 if __name__ == "__main__":
     main()
