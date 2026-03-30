@@ -1,0 +1,11 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Git 全文件一键提交+推GitHub",
+      "type": "shell",
+      "command": "git add . && git commit -m \"自动备份 $(date '+%Y-%m-%d %H:%M:%S')\" && git push",
+      "problemMatcher": []
+    }
+  ]
+}

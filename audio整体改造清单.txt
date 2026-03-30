@@ -1,0 +1,116 @@
+模块化清单（按依赖关系排序）
+模块 1：参考音频管理器（core/audio/reference.py）
+
+职责：管理参考音频的上传、AI生成、Whisper转录、缓存读写。
+
+对外接口：
+
+upload_local(file_path) → 触发上传和转录，更新内部状态。
+
+ai_generate(text, voice_desc, work_dir) → 调用千问TTS生成音频，自动上传并转录。
+
+get_ref_audio_filename() → 返回服务器上的文件名（用于后续生成）。
+
+get_ref_text() → 返回参考文本。
+
+get_ref_audio_path() → 返回本地路径（用于界面显示）。
+
+测试：命令行模拟（提供本地文件、模拟AI生成），验证缓存文件正确生成。
+
+模块 2：段落润色器（core/audio/segment_labeler.py）
+
+职责：调用 audio_labeler.label_audio 将原始段落转换为带标签的片段列表。
+
+对外接口：
+
+generate_segments(paragraphs, callback) → 异步生成，完成后回调 (segments)。
+
+测试：传入测试段落，验证输出的 segments 结构和 labeled_text.txt。
+
+模块 3：音频生成控制器（core/audio/generation.py）
+
+职责：批量生成音频片段，管理队列、状态、重试、持久化、暂停/恢复/取消、进度回调。
+
+依赖模块1（参考音频信息）。
+
+对外接口：
+
+set_reference(ref_audio_filename, ref_text, language)
+
+add_task(index, text, callback)
+
+start() / pause() / resume() / cancel_all() / stop()
+
+set_progress_callback(callback)
+
+sync_existing_segment(index, audio_path, duration)（用于加载历史项目）
+
+测试：模拟生成单个片段，检查状态转换、重试、持久化文件。
+
+模块 4：播放控制器（core/audio/playback.py）
+
+职责：封装 pygame 播放逻辑，提供播放、暂停、停止、跳转、进度回调。
+
+对外接口：
+
+play(filepath, on_start=None, on_position=None, on_end=None)
+
+pause() / resume() / stop() / seek(seconds)
+
+测试：播放测试音频，验证回调。
+
+模块 5：字幕生成器（core/audio/subtitle.py）
+
+职责：调用阿里云语音识别生成字幕。
+
+对外接口：
+
+generate(audio_path, callback) → 异步生成，回调 (success, srt_path)
+
+测试：用本地音频测试，验证生成的 SRT 文件。
+
+模块 6：最终音频合成器（core/audio/final_combine.py）
+
+职责：将已确认的片段合并为最终音频，生成时间轴 JSON。
+
+对外接口：
+
+combine(confirmed_segments, callback) → 异步合并，回调 (success, final_audio_path)
+
+测试：提供几个片段，验证合并后的音频和时间轴。
+
+模块 7：重录管理器（可选，可暂缓）
+
+职责：管理重录请求（复用模块3的生成能力，但单独处理 UI 和文本修改）。
+
+可以放在 gui/audio/retake.py，因为涉及 UI 交互。
+
+或者简化：重录直接调用模块3的 reset_segment + add_task，不单独成模块。
+
+实施顺序建议
+模块1（参考音频管理器） → 命令行测试 → 接入 audio_panel。☑️
+
+模块3（音频生成控制器） → 命令行测试 → 接入 audio_panel（替换原有的批量生成逻辑）。☑️
+
+模块4（播放控制器） → 命令行测试 → 接入 audio_panel（替换 pygame 直接调用）。☑️
+
+模块2（段落润色器） → 命令行测试 → 接入 audio_panel。☑️
+
+模块5（字幕生成器） → 命令行测试 → 接入 audio_panel。☑️
+
+模块6（最终合成器） → 命令行测试 → 接入 audio_panel。☑️
+
+重录管理器最后处理（或直接复用模块3）。
+
+每个模块独立测试通过后，再修改 audio_panel.py 替换原有代码，确保功能不丢失。
+
+注意事项
+所有模块设计成“无 UI 依赖”，通过回调与 UI 通信。
+
+模块之间尽量解耦，通过明确的接口交互。
+
+保留原有工作目录的文件读写逻辑（segments_info.json, reference_cache.json 等）以兼容历史项目。
+
+在模块测试阶段，可以编写简单的命令行脚本模拟 UI 回调。
+
+这样，我们可以一步一步稳定推进，避免之前“大改大崩”的情况。你确认这个清单和顺序后，我们就从模块1：参考音频管理器开始。

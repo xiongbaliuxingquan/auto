@@ -941,7 +941,7 @@ class App:
 
     def processing_failed(self):
         self.processing = False
-        self.standard_mode.start_btn.config(state='normal')
+        self.standard_mode.split_btn.config(state='normal')   # 原 start_btn
         self.status_label.config(text="处理失败，请查看日志")
         messagebox.showerror("错误", "处理过程中出现错误，请查看日志")
 
