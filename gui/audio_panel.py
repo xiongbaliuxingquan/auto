@@ -32,6 +32,7 @@ from core.audio.generation import AudioGenerationController
 from gui.tts_tutorial import TUTORIAL_CONTENT
 from core.audio.segment_labeler import SegmentLabeler
 from core.audio.final_combine import FinalAudioCombine
+from gui.audio.retake_manager import RetakeManager
 
 # 尝试导入 pygame 用于播放
 try:
@@ -77,20 +78,17 @@ class AudioPanel(ttk.Frame):
         self.ref_audio_filename = None
         self.ref_text = None
         self.segments = []
-        self.retake_queue = []
         self.paragraphs = []
-        self.retake_thread = None
         self.running = False
         self.stop_requested = False
-        self.next_retake_index = 0
         self.reminder_window = None
         self.language_var = tk.StringVar(value="auto")
         self._work_dir_set = None
         self._loaded = False
         self.has_labeled_segments = False
-        self.retake_thread_running = True
         self.reference_manager = None
         self.segment_labeler = None
+        self.retake_manager = None
 
         # 播放器相关
         self.player_available = PLAYER_AVAILABLE
@@ -321,6 +319,23 @@ class AudioPanel(ttk.Frame):
             timestamp = time.strftime("[%H:%M:%S] ")
             print(timestamp + msg)
 
+    def _on_retake_confirm(self, original_index, audio_path, duration, new_text):
+        """重录确认后更新原片段"""
+        for seg in self.segments:
+            if seg['index'] == original_index:
+                seg['audio_file'] = audio_path
+                seg['duration'] = duration
+                seg['text'] = new_text
+                seg['confirmed'] = True
+                seg['status_var'].set("已确认")
+                seg['play_btn'].config(state='normal', command=lambda p=audio_path: self.play_audio(p))
+                seg['retake_btn'].config(state='disabled')
+                seg['confirm_btn'].config(state='disabled')
+                preview = new_text[:60] + '...' if len(new_text) > 60 else new_text
+                seg['preview_label'].config(text=preview)
+                break
+        self.check_all_confirmed()
+
     def set_work_dir(self, work_dir):
         if self.work_dir == work_dir:
             print("[DEBUG] Already set, skipping")
@@ -344,6 +359,17 @@ class AudioPanel(ttk.Frame):
         )
         self.gen_controller.set_progress_callback(self._on_generation_progress)
         self.gen_controller.start()
+
+        self.retake_manager = RetakeManager(
+            work_dir,
+            self.ref_audio_filename,
+            self.ref_text,
+            self.language_var.get(),
+            self.log,
+            self.play_audio
+        )
+        self.retake_manager.set_retake_scrollable(self.retake_scrollable)
+        self.retake_manager.on_segment_updated = self._on_retake_confirm
 
         if self.load_segments_from_labeled_text(work_dir):
             self.log("已从历史项目加载已有分段，无需重新润色")
@@ -865,91 +891,6 @@ class AudioPanel(ttk.Frame):
         self.running = False
         self.start_btn.config(state='normal')
         self.stop_btn.config(state='disabled')
-
-    def _process_retake_queue(self):
-        while self.retake_thread_running:
-            if not self.retake_queue:
-                time.sleep(0.5)
-                continue
-            item = self.retake_queue.pop(0)
-            self.log(f"开始重录片段 {item['original_index']} ...")
-            if item['new_text'] is not None:
-                final_text = item['new_text']
-            else:
-                final_text = self.ai_modify_text(item['original_text'], item['problem_desc'])
-            retake_idx = self.next_retake_index
-            self.next_retake_index += 1
-            audio_path = generate_single(
-                text=final_text,
-                index=retake_idx,
-                output_dir=self.work_dir,
-                ref_audio_filename=self.ref_audio_filename,
-                ref_text=self.ref_text,
-                language=self.language_var.get()
-            )
-            if audio_path:
-                duration = get_audio_duration(audio_path)
-                self.after(0, lambda: self.add_retake_item(item, audio_path, duration, final_text, retake_idx))
-            else:
-                self.log(f"重录失败: {item['original_text'][:30]}...")
-                row_frame = item.get('row_frame')
-                if row_frame and hasattr(row_frame, 'pending_info'):
-                    row_frame.pending_info['status_label'].config(text="失败", foreground='red')
-
-    def ai_modify_text(self, original_text, problem_desc):
-        prompt = f"""
-原始文本（带 Fish S2 标签）：
-{original_text}
-
-用户反馈：{problem_desc}
-
-请根据反馈修改文本，保持原有结构（仍包含 `[标签]` 和 `[inhale]`），只修改语气、语速、情感等相关内容。输出修改后的文本。
-"""
-        try:
-            new_text = call_deepseek(prompt, temperature=0.7)
-            return new_text
-        except Exception as e:
-            self.log(f"AI修改文本失败: {e}")
-            return original_text
-
-    def add_retake_item(self, item, audio_path, duration, new_text, retake_idx):
-        self.log(f"重录完成（序号{retake_idx}）: {new_text[:30]}... 时长 {duration:.2f}s")
-        row_frame = item.get('row_frame')
-        if row_frame and hasattr(row_frame, 'pending_info'):
-            info = row_frame.pending_info
-            preview = new_text[:30] + '...' if len(new_text) > 30 else new_text
-            info['label_desc'].config(text=preview)
-            info['status_label'].config(text="已生成", foreground='green')
-            info['play_btn'].config(state='normal', command=lambda p=audio_path: self.play_audio(p))
-            info['confirm_btn'].config(state='normal', command=lambda: self.confirm_retake(item, audio_path, duration, new_text, retake_idx, row_frame))
-            row_frame.retake_result = {
-                'audio_path': audio_path,
-                'duration': duration,
-                'new_text': new_text,
-                'retake_idx': retake_idx
-            }
-        else:
-            self._add_retake_row(item, audio_path, duration, new_text, retake_idx)
-
-    def _add_retake_row(self, item, audio_path, duration, new_text, retake_idx):
-        self.log(f"重录完成（序号{retake_idx}）: {new_text[:30]}... 时长 {duration:.2f}s")
-        row_frame = ttk.Frame(self.retake_scrollable)
-        row_frame.pack(fill='x', pady=2)
-        ttk.Label(row_frame, text=f"原片段{item['original_index']}", width=12).pack(side='left')
-        problem = item['problem_desc'][:30] + '...' if len(item['problem_desc']) > 30 else item['problem_desc']
-        ttk.Label(row_frame, text=problem, width=40, wraplength=300).pack(side='left', padx=5)
-        play_btn = ttk.Button(row_frame, text="播放", command=lambda: self.play_audio(audio_path))
-        play_btn.pack(side='left', padx=2)
-        confirm_btn = ttk.Button(row_frame, text="确认", command=lambda: self.confirm_retake(item, audio_path, duration, new_text, retake_idx, row_frame))
-        confirm_btn.pack(side='left', padx=2)
-        row_frame.retake_info = {
-            'item': item,
-            'audio_path': audio_path,
-            'duration': duration,
-            'new_text': new_text,
-            'retake_idx': retake_idx
-        }
-
     def update_segment_status(self, idx, status):
         for seg in self.segments:
             if seg.get('index') == idx:
@@ -1062,57 +1003,23 @@ class AudioPanel(ttk.Frame):
         win.transient(self)
         win.grab_set()
         self._retake_dialog_win = win
+
         ttk.Label(win, text="带标签的原文（可直接修改）:").pack(anchor='w', padx=10, pady=5)
         text_edit = scrolledtext.ScrolledText(win, height=12, wrap='word')
         text_edit.insert('1.0', seg['text'])
         text_edit.pack(fill='both', expand=True, padx=10, pady=5)
+
         ttk.Label(win, text="修改意见（如“语速太慢”、“语气不够激昂”）:").pack(anchor='w', padx=10, pady=5)
         problem_entry = ttk.Entry(win, width=60)
         problem_entry.pack(fill='x', padx=10, pady=5)
+
         btn_frame = ttk.Frame(win)
         btn_frame.pack(pady=10)
-        def submit():
-            new_text = text_edit.get('1.0', 'end-1c').strip()
-            problem = problem_entry.get().strip()
-            if new_text == seg['text'] and not problem:
-                messagebox.showwarning("提示", "请修改原文或输入修改意见")
-                return
-            win.destroy()
-            self._retake_dialog_win = None
-            final_text = new_text if new_text != seg['text'] else None
-            self._add_retake_pending_item(seg['index'], final_text, problem)
+
+        submit = self.retake_manager.request_retake(idx, seg, text_edit, problem_entry, win)
+
         ttk.Button(btn_frame, text="提交", command=submit).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="取消", command=lambda: (win.destroy(), setattr(self, '_retake_dialog_win', None))).pack(side='left', padx=5)
-
-    def _add_retake_pending_item(self, original_index, final_text, problem_desc):
-        row_frame = ttk.Frame(self.retake_scrollable)
-        row_frame.pack(fill='x', pady=2)
-        ttk.Label(row_frame, text=f"原片段{original_index}", width=12).pack(side='left')
-        label_desc = ttk.Label(row_frame, text="生成中...", width=40, wraplength=300)
-        label_desc.pack(side='left', padx=5)
-        play_btn = ttk.Button(row_frame, text="播放", state='disabled')
-        play_btn.pack(side='left', padx=2)
-        confirm_btn = ttk.Button(row_frame, text="确认", state='disabled')
-        confirm_btn.pack(side='left', padx=2)
-        status_label = ttk.Label(row_frame, text="生成中...", foreground='blue')
-        status_label.pack(side='left', padx=5)
-        row_frame.pending_info = {
-            'original_index': original_index,
-            'final_text': final_text,
-            'problem_desc': problem_desc,
-            'status_label': status_label,
-            'play_btn': play_btn,
-            'confirm_btn': confirm_btn,
-            'label_desc': label_desc
-        }
-        self.retake_queue.append({
-            'original_index': original_index,
-            'original_text': self.segments[original_index-1]['text'],
-            'problem_desc': problem_desc,
-            'new_text': final_text,
-            'row_frame': row_frame
-        })
-
     def confirm_segment(self, idx):
         for seg in self.segments:
             if seg.get('index') == idx:
@@ -1123,31 +1030,10 @@ class AudioPanel(ttk.Frame):
                 self.log(f"片段 {idx} 已确认")
                 break
         self.check_all_confirmed()
-
-    def confirm_retake(self, item, audio_path, duration, new_text, retake_idx, row_frame):
-        self.log(f"确认重录片段（原序号{item['original_index']}）: 新音频 {audio_path}")
-        for seg in self.segments:
-            if seg.get('index') == item['original_index']:
-                seg['audio_file'] = audio_path
-                seg['duration'] = duration
-                seg['text'] = new_text
-                seg['confirmed'] = True
-                seg['status_var'].set("已确认")
-                seg['play_btn'].config(state='normal', command=lambda p=audio_path: self.play_audio(p))
-                seg['retake_btn'].config(state='disabled')
-                seg['confirm_btn'].config(state='disabled')
-                preview = new_text[:60] + '...' if len(new_text) > 60 else new_text
-                seg['preview_label'].config(text=preview)
-                break
-        row_frame.destroy()
-        self.check_all_confirmed()
-
     def check_all_confirmed(self):
-        all_original_confirmed = all(seg.get('confirmed', False) for seg in self.segments)
-        if all_original_confirmed and not self.retake_queue:
+        if all(seg.get('confirmed', False) for seg in self.segments):
             self.log("所有片段已确认，开始合成最终音频...")
             threading.Thread(target=self.combine_audio, daemon=True).start()
-
     def combine_audio(self):
         confirmed = [seg for seg in self.segments if seg.get('confirmed')]
         confirmed.sort(key=lambda x: x.get('index', 0))
