@@ -29,6 +29,7 @@ from core.audio.playback import PlaybackController
 from core.audio.subtitle import SubtitleGenerator
 from core.audio.reference import ReferenceAudioManager
 from core.audio.generation import AudioGenerationController
+from gui.tts_tutorial import TUTORIAL_CONTENT
 
 # 尝试导入 pygame 用于播放
 try:
@@ -87,6 +88,7 @@ class AudioPanel(ttk.Frame):
         self.has_labeled_segments = False
         self.retake_thread_running = True
         self.reference_manager = None
+        self.segment_labeler = None
 
         # 播放器相关
         self.player_available = PLAYER_AVAILABLE
@@ -325,6 +327,7 @@ class AudioPanel(ttk.Frame):
 
         self.subtitle_generator = SubtitleGenerator(work_dir, log_callback=self.log)
         self.reference_manager = ReferenceAudioManager(work_dir, log_callback=self.log)
+        self.segment_labeler = SegmentLabeler(work_dir, log_callback=self.log)
         self.ref_audio_path.set(self.reference_manager.get_ref_audio_path() or "")
         self.ref_audio_filename = self.reference_manager.get_ref_audio_filename()
         self.ref_text = self.reference_manager.get_ref_text()
@@ -583,6 +586,110 @@ class AudioPanel(ttk.Frame):
 
     def ai_generate_audio(self):
         """弹出AI生成参考音频窗口"""
+        if not self.work_dir:
+            messagebox.showerror("错误", "请先设置工作目录")
+            return
+        if not hasattr(self, 'script_text') or not self.script_text:
+            messagebox.showerror("错误", "请先加载口播稿")
+            return
+
+        win = tk.Toplevel(self)
+        win.title("AI生成参考音频")
+        win.geometry("700x600")
+        win.update_idletasks()
+        screen_width = win.winfo_screenwidth()
+        screen_height = win.winfo_screenheight()
+        x = (screen_width - 700) // 2
+        y = (screen_height - 600) // 2
+        win.geometry(f"+{x}+{y}")
+        win.transient(self)
+        win.grab_set()
+
+        # 语音描述输入
+        ttk.Label(win, text="语音描述（如“语速很快，中年男性，声音干练”）:").pack(anchor='w', padx=10, pady=5)
+        voice_entry = ttk.Entry(win, width=60)
+        voice_entry.pack(fill='x', padx=10, pady=5)
+
+        # 教程按钮
+        btn_frame_tutorial = ttk.Frame(win)
+        btn_frame_tutorial.pack(fill='x', padx=10, pady=2)
+        ttk.Button(btn_frame_tutorial, text="提示词详细教程", command=self.open_tts_tutorial).pack(side='right')
+
+        # 朗读文本编辑框
+        ttk.Label(win, text="朗读文本（自动从口播稿提取前几句）:").pack(anchor='w', padx=10, pady=5)
+        text_edit = scrolledtext.ScrolledText(win, height=8, wrap='word')
+        sentences = re.split(r'[。！？]', self.script_text)
+        if len(sentences) >= 3:
+            preview_text = '。'.join(sentences[:3]) + '。'
+        else:
+            preview_text = self.script_text[:200]
+        text_edit.insert('1.0', preview_text)
+        text_edit.pack(fill='both', expand=True, padx=10, pady=5)
+
+        # 生成结果区域
+        result_frame = ttk.LabelFrame(win, text="生成结果", padding=5)
+        result_frame.pack(fill='x', padx=10, pady=10)
+        status_var = tk.StringVar(value="未生成")
+        ttk.Label(result_frame, textvariable=status_var, foreground='blue').pack(anchor='w')
+        audio_path_var = tk.StringVar()
+        ttk.Entry(result_frame, textvariable=audio_path_var, state='readonly', width=60).pack(fill='x', padx=5, pady=2)
+
+        btn_row = ttk.Frame(result_frame)
+        btn_row.pack(pady=5)
+        play_btn = ttk.Button(btn_row, text="播放", state='disabled',
+                            command=lambda: self.play_audio(audio_path_var.get()))
+        play_btn.pack(side='left', padx=5)
+
+        def open_history():
+            if not self.work_dir:
+                messagebox.showerror("错误", "工作目录未设置")
+                return
+            file_path = filedialog.askopenfilename(
+                title="选择预览音频文件",
+                initialdir=self.work_dir,
+                filetypes=[("MP3 files", "*.mp3"), ("All files", "*.*")]
+            )
+            if file_path:
+                audio_path_var.set(file_path)
+                status_var.set("已加载历史预览")
+                play_btn.config(state='normal')
+
+        history_btn = ttk.Button(btn_row, text="打开历史预览", command=open_history)
+        history_btn.pack(side='left', padx=5)
+
+        def do_generate():
+            voice_desc = voice_entry.get().strip()
+            if not voice_desc:
+                messagebox.showwarning("提示", "请填写语音描述")
+                return
+            text_to_read = text_edit.get('1.0', 'end-1c').strip()
+            if not text_to_read:
+                messagebox.showwarning("提示", "朗读文本不能为空")
+                return
+            gen_btn.config(state='disabled', text="生成中...")
+            status_var.set("正在生成音频，约1分钟，请稍候...")
+            win.update()
+
+            def run():
+                try:
+                    audio_path = generate_reference_audio(text_to_read, voice_desc, self.work_dir)
+                    if audio_path:
+                        audio_path_var.set(audio_path)
+                        status_var.set("生成成功！")
+                        play_btn.config(state='normal')
+                        self.log("AI生成参考音频成功: " + audio_path)
+                    else:
+                        status_var.set("生成失败，请检查日志")
+                except Exception as e:
+                    status_var.set(f"生成异常: {e}")
+                finally:
+                    win.after(0, lambda: gen_btn.config(state='normal', text="生成"))
+
+            threading.Thread(target=run, daemon=True).start()
+
+        gen_btn = ttk.Button(win, text="生成", command=do_generate)
+        gen_btn.pack(pady=5)
+
         def confirm():
             path = audio_path_var.get()
             if not path:
@@ -590,21 +697,13 @@ class AudioPanel(ttk.Frame):
                 return
             win.destroy()
             self.log("正在上传参考音频并提取文本...")
-
             def task():
                 success = self.reference_manager.set_from_local(path)
                 self.after(0, lambda: self._on_ref_audio_uploaded(success, path))
-
             threading.Thread(target=task, daemon=True).start()
-        # 窗口关闭后，强制同步参考音频路径到界面
-        path = self.reference_manager.get_ref_audio_path()
-        if path:
-            self.ref_audio_path.set(path)
-            self.ref_audio_filename = self.reference_manager.get_ref_audio_filename()
-            self.ref_text = self.reference_manager.get_ref_text()
-            self.log(f"已同步参考音频: {path}")
-        else:
-            self.log("未获取到参考音频路径")
+
+        ttk.Button(win, text="确认使用", command=confirm).pack(pady=5)
+        ttk.Button(win, text="取消", command=win.destroy).pack(pady=5)
 
     def open_tts_tutorial(self):
         win = tk.Toplevel(self)
@@ -617,30 +716,6 @@ class AudioPanel(ttk.Frame):
         text_widget.insert('1.0', TUTORIAL_CONTENT)
         text_widget.config(state='disabled')
         ttk.Button(win, text="关闭", command=win.destroy).pack(pady=5)
-
-    def generate_segments_manual(self):
-        if not self.work_dir:
-            messagebox.showerror("错误", "请先设置工作目录")
-            return
-        if not self.paragraphs and not self.has_labeled_segments:
-            messagebox.showerror("错误", "未加载段落，请先执行段落分割")
-            return
-        if self.has_labeled_segments:
-            answer = messagebox.askyesno("确认", "已有润色后的段落，重新润色将覆盖现有音频片段，是否继续？\n")
-            if not answer:
-                return
-            labeled_path = os.path.join(self.work_dir, "labeled_text.txt")
-            json_path = os.path.join(self.work_dir, "segments_info.json")
-            if os.path.exists(labeled_path):
-                os.remove(labeled_path)
-            if os.path.exists(json_path):
-                os.remove(json_path)
-            self.has_labeled_segments = False
-            self.gen_seg_btn.config(text="段落自动润色")
-            self.load_paragraphs(self.work_dir)
-        self.log("正在对段落进行润色和切分，请稍候...")
-        threading.Thread(target=self._generate_segments_async, daemon=True).start()
-
     def _generate_segments_async(self):
         try:
             full_text = "\n\n".join(self.paragraphs)
