@@ -30,16 +30,16 @@ from utils import config_manager
 from utils.error_logger import log_error
 
 class ComfyUIManager:
-    def __init__(self, api_url, output_base_dir, fps=24, max_duration=20):
+    def __init__(self, api_url, output_base_dir, fps=24, max_duration=20, on_shot_generated=None):
         self.api_url = api_url
         self.output_base_dir = output_base_dir
         self.fps = fps
         self.max_duration = max_duration
         self.log_callback = None
         self.config = self._load_workflow_config()
-        # 从 user_settings.json 加载重试参数
-        self.max_retries = config_manager.MAX_RETRIES   # 最大重试次数
-        self.retry_delay = config_manager.RETRY_DELAY   # 重试间隔秒数
+        self.max_retries = config_manager.MAX_RETRIES
+        self.retry_delay = config_manager.RETRY_DELAY
+        self.on_shot_generated = on_shot_generated   # 新增回调
 
     def _load_workflow_config(self):
         config_path = os.path.join(os.path.dirname(__file__), '..', 'workflow_config.json')
@@ -297,6 +297,8 @@ class ComfyUIManager:
                                 save_path = os.path.join(output_dir, f"镜头{shot_id}{ext}")
                                 if self.download_video(media_info, save_path):
                                     gen_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    if self.on_shot_generated:
+                                        self.on_shot_generated(shot_id)
                                     return True, shot_id, ext, gen_time
                                 else:
                                     return False, "下载失败", None, None
@@ -398,6 +400,9 @@ class ComfyUIManager:
         failed_shots = []
         success_count = 0
 
+        service_fail_count = 0
+        MAX_SERVICE_FAIL = 5
+
         for idx, shot in enumerate(shots_to_generate):
             if edits and shot['id'] in edits:
                 shot = shot.copy()
@@ -420,7 +425,15 @@ class ComfyUIManager:
                     "time": gen_time
                 }
                 self._log(f"镜头 {shot['id']} 生成成功，进度：{success_count}/{total}")
+                service_fail_count = 0  # 成功一次，重置计数
             else:
+                # 检查是否是服务异常
+                if result and result.startswith("ComfyUI服务异常:"):
+                    service_fail_count += 1
+                    self._log(f"检测到服务异常 ({service_fail_count}/{MAX_SERVICE_FAIL})")
+                    if service_fail_count >= MAX_SERVICE_FAIL:
+                        self._log("连续多次服务异常，终止生成")
+                        return False, "ComfyUI服务异常: 连续多次连接失败，请检查服务是否运行"
                 failed_shots.append((shot, result))
                 self._log(f"镜头 {shot['id']} 初次生成失败: {result}")
 
@@ -433,6 +446,7 @@ class ComfyUIManager:
 
         # ---------- 第二阶段：重试 ----------
         self._log(f"\n===== 开始重试失败镜头，最大重试次数 {self.max_retries}，间隔 {self.retry_delay} 秒 =====\n")
+        retry_service_fail_count = 0
         for attempt in range(1, self.max_retries + 1):
             if not failed_shots:
                 break
@@ -458,6 +472,13 @@ class ComfyUIManager:
                     }
                 else:
                     self._log(f"镜头 {shot['id']} 重试失败: {result}")
+                    # 检查服务异常
+                    if result and result.startswith("ComfyUI服务异常:"):
+                        retry_service_fail_count += 1
+                        self._log(f"重试阶段检测到服务异常 ({retry_service_fail_count}/{MAX_SERVICE_FAIL})")
+                        if retry_service_fail_count >= MAX_SERVICE_FAIL:
+                            self._log("重试阶段连续多次服务异常，终止生成")
+                            return False, "ComfyUI服务异常: 连续多次连接失败，请检查服务是否运行"
                     next_failed.append((shot, result))
                 if attempt < self.max_retries:
                     time.sleep(self.retry_delay)

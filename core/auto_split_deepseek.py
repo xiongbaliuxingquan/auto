@@ -522,7 +522,7 @@ if __name__ == "__main__":
                 shot['prompt'] = orig.get('visual', '默认提示词')
                 print(f"⚠️ 镜头 {shot['id']} 提示词缺失，已用视觉描述填充，请检查并手动修改")
     if missing_report:
-        print("\n❌ 六元素检查发现缺失：")
+        print("\n[错误] 六元素检查发现缺失：")
         for msg in missing_report:
             print(f"   {msg}")
         print("💡 提示：上述缺失字段已用默认值填充，建议在后续编辑中手动修正。")

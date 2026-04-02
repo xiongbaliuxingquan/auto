@@ -50,6 +50,7 @@ class App:
         self.continue_mode = False
         self.remaining_shots = None
         self._work_dir_set = None
+        self.video_generation_callbacks = []   # 存储回调函数
 
         # 初始化临时目录
         self.temp_dir = os.path.join(os.path.dirname(__file__), "temp_uploads")
@@ -160,6 +161,10 @@ class App:
         self.toolbar.mode_type_var.trace('w', lambda *args: self.on_mode_type_change())
         self.toolbar.text_type_var.trace('w', lambda *args: self._update_preset_label())
 
+    def register_video_generation_callback(self, callback):
+        """注册视频生成回调，当有镜头生成时调用"""
+        self.video_generation_callbacks.append(callback)
+
     def on_subtitle_generated(self, srt_path):
         """字幕生成后自动设置为有字幕模式"""
         self.toolbar.subtitle_mode_var.set("有字幕")
@@ -226,7 +231,7 @@ class App:
                 script = script_widget.get('1.0', 'end-1c').strip()
         else:
             # 一键成片模式：从预览文本框获取
-            script = self.simple_mode.preview_text.get('1.0', 'end-1c').strip()
+            script = self.simple_mode.story_tab.text_widget.get('1.0', 'end-1c').strip()
         self.audio_panel.set_script(script)
 
     # ---------- 视频模块 ----------
@@ -484,95 +489,109 @@ class App:
         folder = filedialog.askdirectory(title="选择历史工作目录")
         if not folder:
             return
-        header_path = os.path.join(folder, "header.txt")
-        shots_path = os.path.join(folder, "shots.txt")
-        para_path = os.path.join(folder, "paragraphs.json")
-        # 新流程：存在 header.txt 且 (shots.txt 或 paragraphs.json)
-        if not os.path.exists(header_path) or (not os.path.exists(shots_path) and not os.path.exists(para_path)):
-            messagebox.showerror("错误", "所选目录不是有效的工作目录（缺少 header.txt 且缺少 shots.txt 或 paragraphs.json）")
-            return
+        # 检测项目类型：如果存在 story.txt 或 metadata.json，则为一键成片项目
+        if os.path.exists(os.path.join(folder, "story.txt")) or os.path.exists(os.path.join(folder, "metadata.json")):
+            # 切换模式
+            self.toolbar.mode_type_var.set("一键成片")
+            self.on_mode_type_change()  # 触发界面切换
+            # 加载项目
+            self.simple_mode.load_project(folder)
+            self.work_dir = folder
+            self.status_label.config(text=f"已加载历史项目: {os.path.basename(folder)}")
+            self.dir_label.config(text=f"工作目录: {folder}")
+            self.log(f"已加载一键成片历史项目: {folder}")
+        else:
+            if not folder:
+                return
+            header_path = os.path.join(folder, "header.txt")
+            shots_path = os.path.join(folder, "shots.txt")
+            para_path = os.path.join(folder, "paragraphs.json")
+            # 新流程：存在 header.txt 且 (shots.txt 或 paragraphs.json)
+            if not os.path.exists(header_path) or (not os.path.exists(shots_path) and not os.path.exists(para_path)):
+                messagebox.showerror("错误", "所选目录不是有效的工作目录（缺少 header.txt 且缺少 shots.txt 或 paragraphs.json）")
+                return
 
-        try:
-            with open(header_path, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if line.startswith("project:"):
-                        self.story_title = line.split(":", 1)[1].strip()
-                        break
-            if not self.story_title:
+            try:
+                with open(header_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.startswith("project:"):
+                            self.story_title = line.split(":", 1)[1].strip()
+                            break
+                if not self.story_title:
+                    self.story_title = os.path.basename(folder)
+            except Exception:
                 self.story_title = os.path.basename(folder)
-        except Exception:
-            self.story_title = os.path.basename(folder)
-        self.work_dir = folder
-        self.is_history_project = True
-        self.status_label.config(text=f"已加载历史项目: {self.story_title}")
-        self.dir_label.config(text=f"工作目录: {self.work_dir}")
+            self.work_dir = folder
+            self.is_history_project = True
+            self.status_label.config(text=f"已加载历史项目: {self.story_title}")
+            self.dir_label.config(text=f"工作目录: {self.work_dir}")
 
-        # 字幕文件检测
-        srt_path = os.path.join(self.work_dir, "input.srt")
-        if os.path.exists(srt_path):
-            self.toolbar.subtitle_mode_var.set("有字幕")
-            self.standard_mode.upload_subtitle_btn.config(state='disabled')
-            # 若有字幕，可以启用对齐等按钮
-            # self.standard_mode.apply_duration_btn.config(state='normal')
-            # self.standard_mode.optimize_and_continue_btn.config(state='normal')
-            self.log("检测到已存在的字幕文件，可点击「应用字幕时长」或「优化并继续」")
-        else:
-            self.toolbar.subtitle_mode_var.set("无字幕")
-            self.standard_mode.upload_subtitle_btn.config(state='normal')
-            # self.standard_mode.apply_duration_btn.config(state='disabled')
-            # self.standard_mode.optimize_and_continue_btn.config(state='disabled')
-
-        # 尝试从易读版分镜文件获取镜头信息（如果有）
-        temp_manager = comfyui_manager.ComfyUIManager("", "")
-        readable_file = temp_manager.get_latest_readable_file(self.work_dir)
-        if readable_file:
-            self.shots_info = temp_manager.get_shots_info(readable_file)
-            if self.shots_info:
-                self.standard_mode.select_edit_btn.config(state='normal')
-                self.log(f"找到 {len(self.shots_info)} 个镜头（来自易读版），可点击「选择或编辑提示词」进行筛选")
+            # 字幕文件检测
+            srt_path = os.path.join(self.work_dir, "input.srt")
+            if os.path.exists(srt_path):
+                self.toolbar.subtitle_mode_var.set("有字幕")
+                self.standard_mode.upload_subtitle_btn.config(state='disabled')
+                # 若有字幕，可以启用对齐等按钮
+                # self.standard_mode.apply_duration_btn.config(state='normal')
+                # self.standard_mode.optimize_and_continue_btn.config(state='normal')
+                self.log("检测到已存在的字幕文件，可点击「应用字幕时长」或「优化并继续」")
             else:
-                self.shots_info = None
-                self.standard_mode.select_edit_btn.config(state='disabled')
-        else:
-            # 如果没有易读版，尝试从 shots.txt 解析（旧项目）
-            if os.path.exists(shots_path):
-                self.shots_info = self._parse_shots_from_txt(shots_path)
+                self.toolbar.subtitle_mode_var.set("无字幕")
+                self.standard_mode.upload_subtitle_btn.config(state='normal')
+                # self.standard_mode.apply_duration_btn.config(state='disabled')
+                # self.standard_mode.optimize_and_continue_btn.config(state='disabled')
+
+            # 尝试从易读版分镜文件获取镜头信息（如果有）
+            temp_manager = comfyui_manager.ComfyUIManager("", "")
+            readable_file = temp_manager.get_latest_readable_file(self.work_dir)
+            if readable_file:
+                self.shots_info = temp_manager.get_shots_info(readable_file)
                 if self.shots_info:
                     self.standard_mode.select_edit_btn.config(state='normal')
-                    self.log(f"找到 {len(self.shots_info)} 个镜头（来自 shots.txt），但尚未生成详细分镜，编辑功能可能受限")
+                    self.log(f"找到 {len(self.shots_info)} 个镜头（来自易读版），可点击「选择或编辑提示词」进行筛选")
                 else:
                     self.shots_info = None
                     self.standard_mode.select_edit_btn.config(state='disabled')
             else:
-                # 新流程：只有 paragraphs.json，尚未生成分镜
-                self.shots_info = None
-                self.standard_mode.select_edit_btn.config(state='disabled')
-                self.log("未找到分镜文件，请先通过音频模块生成字幕和分镜。")
+                # 如果没有易读版，尝试从 shots.txt 解析（旧项目）
+                if os.path.exists(shots_path):
+                    self.shots_info = self._parse_shots_from_txt(shots_path)
+                    if self.shots_info:
+                        self.standard_mode.select_edit_btn.config(state='normal')
+                        self.log(f"找到 {len(self.shots_info)} 个镜头（来自 shots.txt），但尚未生成详细分镜，编辑功能可能受限")
+                    else:
+                        self.shots_info = None
+                        self.standard_mode.select_edit_btn.config(state='disabled')
+                else:
+                    # 新流程：只有 paragraphs.json，尚未生成分镜
+                    self.shots_info = None
+                    self.standard_mode.select_edit_btn.config(state='disabled')
+                    self.log("未找到分镜文件，请先通过音频模块生成字幕和分镜。")
 
-        # 根据项目类型启用对应按钮
-        self.standard_mode.run_workflow_btn.config(state='normal', text="运行工作流")
-        self.standard_mode.first_frame_btn.config(state='normal')
-        self.standard_mode.align_btn.config(state='normal')
-        self.log(f"已加载历史工作目录: {self.work_dir}")
+            # 根据项目类型启用对应按钮
+            self.standard_mode.run_workflow_btn.config(state='normal', text="运行工作流")
+            self.standard_mode.first_frame_btn.config(state='normal')
+            self.standard_mode.align_btn.config(state='normal')
+            self.log(f"已加载历史工作目录: {self.work_dir}")
 
-        # 加载口播稿或段落到音频面板
-        if os.path.exists(para_path):
-            # 新项目，加载段落
-            print("[DEBUG] open_history_project: calling audio_panel.set_work_dir")
-            self.audio_panel.set_work_dir(self.work_dir)
-            print("[DEBUG] open_history_project: after set_work_dir")
-            # self.audio_panel.load_paragraphs(self.work_dir)
-            self.log("已加载段落，可进行音频生成")
-            # 启用预览段落按钮
-            self.standard_mode.preview_btn.config(state='normal')
-        else:
-            # 旧项目，尝试加载口播稿
-            script = self._load_script_from_history(self.work_dir)
-            if script:
-                self.audio_panel.set_script(script)
-                self.log("已自动加载口播稿到音频面板")
+            # 加载口播稿或段落到音频面板
+            if os.path.exists(para_path):
+                # 新项目，加载段落
+                print("[DEBUG] open_history_project: calling audio_panel.set_work_dir")
+                self.audio_panel.set_work_dir(self.work_dir)
+                print("[DEBUG] open_history_project: after set_work_dir")
+                # self.audio_panel.load_paragraphs(self.work_dir)
+                self.log("已加载段落，可进行音频生成")
+                # 启用预览段落按钮
+                self.standard_mode.preview_btn.config(state='normal')
             else:
-                self.log("未找到口播稿，请手动加载或生成")
+                # 旧项目，尝试加载口播稿
+                script = self._load_script_from_history(self.work_dir)
+                if script:
+                    self.audio_panel.set_script(script)
+                    self.log("已自动加载口播稿到音频面板")
+                else:
+                    self.log("未找到口播稿，请手动加载或生成")
 
     def _parse_shots_from_txt(self, shots_path):
         shots = []
@@ -1052,7 +1071,21 @@ class App:
 
         api_url = config_manager.COMFYUI_API_URL
         output_dir = os.path.join(self.work_dir, "视频")
-        manager = comfyui_manager.ComfyUIManager(api_url=api_url, output_base_dir=output_dir)
+
+        # 定义镜头生成完成回调
+        def on_shot_done(shot_id):
+            # 调用所有注册的回调
+            for cb in self.video_generation_callbacks:
+                try:
+                    cb(shot_id)
+                except Exception as e:
+                    self.log(f"视频生成回调执行失败: {e}")
+
+        manager = comfyui_manager.ComfyUIManager(
+            api_url=api_url,
+            output_base_dir=output_dir,
+            on_shot_generated=on_shot_done
+        )
         manager.set_log_callback(self.log)
 
         def thread_func():
@@ -1109,6 +1142,9 @@ class App:
         self.continue_mode = False
         self.remaining_shots = None
         self.continue_btn.config(state='disabled')
+        # 刷新一键成片模式的视频标签页（如果存在）
+        if hasattr(self, 'simple_mode') and hasattr(self.simple_mode, 'video_tab'):
+            self.simple_mode.video_tab.refresh_video_list()
 
     def workflow_failed(self):
         self.status_label.config(text="生成视频失败")

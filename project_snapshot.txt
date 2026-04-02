@@ -1,7 +1,8 @@
 # Project Snapshot
-Generated: 2026-03-30 14:35:33.396183
+Generated: 2026-03-31 10:04:23.422406
 
 ## Project Structure
+- audio整体改造清单.txt
 - gui_launcher.py
 - LTX2.3精准提示词.txt
 - project_snapshot.txt
@@ -41,14 +42,22 @@ Generated: 2026-03-30 14:35:33.396183
 - gui\simple_mode.py
 - gui\standard_mode.py
 - gui\step_manager.py
+- gui\story_wizard.py
 - gui\top_toolbar.py
 - gui\tts_tutorial.py
 - gui\ui_components.py
 - gui\workflow_executor.py
 - gui\__init__.py
-- gui\audio\retake_queue.py
+- gui\audio\retake_manager.py
 - gui\audio\segment_list.py
 - gui\audio\__init__.py
+- gui\simple\assets_tab.py
+- gui\simple\controller.py
+- gui\simple\data.py
+- gui\simple\prompts_tab.py
+- gui\simple\script_tab.py
+- gui\simple\story_tab.py
+- gui\simple\__init__.py
 - parsers\ai_response_cleaner.py
 - parsers\analysis_parser.py
 - parsers\base_batch_parser.py
@@ -61,6 +70,7 @@ Generated: 2026-03-30 14:35:33.396183
 - prompt_presets\emotional_default.txt
 - prompt_presets\mime2.txt
 - prompt_presets\mime_default.txt
+- prompt_presets\hardcore\历史时政深度稿.txt
 - tools\ffmpeg\LICENSE.txt
 - utils\ai_utils.py
 - utils\align_video_duration.py
@@ -90,6 +100,126 @@ Generated: 2026-03-30 14:35:33.396183
 - workflow_templates\__init__.py
 
 ## File Contents
+
+### audio整体改造清单.txt
+```
+模块化清单（按依赖关系排序）
+模块 1：参考音频管理器（core/audio/reference.py）
+
+职责：管理参考音频的上传、AI生成、Whisper转录、缓存读写。
+
+对外接口：
+
+upload_local(file_path) → 触发上传和转录，更新内部状态。
+
+ai_generate(text, voice_desc, work_dir) → 调用千问TTS生成音频，自动上传并转录。
+
+get_ref_audio_filename() → 返回服务器上的文件名（用于后续生成）。
+
+get_ref_text() → 返回参考文本。
+
+get_ref_audio_path() → 返回本地路径（用于界面显示）。
+
+测试：命令行模拟（提供本地文件、模拟AI生成），验证缓存文件正确生成。
+
+模块 2：段落润色器（core/audio/segment_labeler.py）
+
+职责：调用 audio_labeler.label_audio 将原始段落转换为带标签的片段列表。
+
+对外接口：
+
+generate_segments(paragraphs, callback) → 异步生成，完成后回调 (segments)。
+
+测试：传入测试段落，验证输出的 segments 结构和 labeled_text.txt。
+
+模块 3：音频生成控制器（core/audio/generation.py）
+
+职责：批量生成音频片段，管理队列、状态、重试、持久化、暂停/恢复/取消、进度回调。
+
+依赖模块1（参考音频信息）。
+
+对外接口：
+
+set_reference(ref_audio_filename, ref_text, language)
+
+add_task(index, text, callback)
+
+start() / pause() / resume() / cancel_all() / stop()
+
+set_progress_callback(callback)
+
+sync_existing_segment(index, audio_path, duration)（用于加载历史项目）
+
+测试：模拟生成单个片段，检查状态转换、重试、持久化文件。
+
+模块 4：播放控制器（core/audio/playback.py）
+
+职责：封装 pygame 播放逻辑，提供播放、暂停、停止、跳转、进度回调。
+
+对外接口：
+
+play(filepath, on_start=None, on_position=None, on_end=None)
+
+pause() / resume() / stop() / seek(seconds)
+
+测试：播放测试音频，验证回调。
+
+模块 5：字幕生成器（core/audio/subtitle.py）
+
+职责：调用阿里云语音识别生成字幕。
+
+对外接口：
+
+generate(audio_path, callback) → 异步生成，回调 (success, srt_path)
+
+测试：用本地音频测试，验证生成的 SRT 文件。
+
+模块 6：最终音频合成器（core/audio/final_combine.py）
+
+职责：将已确认的片段合并为最终音频，生成时间轴 JSON。
+
+对外接口：
+
+combine(confirmed_segments, callback) → 异步合并，回调 (success, final_audio_path)
+
+测试：提供几个片段，验证合并后的音频和时间轴。
+
+模块 7：重录管理器（可选，可暂缓）
+
+职责：管理重录请求（复用模块3的生成能力，但单独处理 UI 和文本修改）。
+
+可以放在 gui/audio/retake.py，因为涉及 UI 交互。
+
+或者简化：重录直接调用模块3的 reset_segment + add_task，不单独成模块。
+
+实施顺序建议
+模块1（参考音频管理器） → 命令行测试 → 接入 audio_panel。☑️
+
+模块3（音频生成控制器） → 命令行测试 → 接入 audio_panel（替换原有的批量生成逻辑）。☑️
+
+模块4（播放控制器） → 命令行测试 → 接入 audio_panel（替换 pygame 直接调用）。☑️
+
+模块2（段落润色器） → 命令行测试 → 接入 audio_panel。☑️
+
+模块5（字幕生成器） → 命令行测试 → 接入 audio_panel。☑️
+
+模块6（最终合成器） → 命令行测试 → 接入 audio_panel。☑️
+
+重录管理器最后处理（或直接复用模块3）。
+
+每个模块独立测试通过后，再修改 audio_panel.py 替换原有代码，确保功能不丢失。
+
+注意事项
+所有模块设计成“无 UI 依赖”，通过回调与 UI 通信。
+
+模块之间尽量解耦，通过明确的接口交互。
+
+保留原有工作目录的文件读写逻辑（segments_info.json, reference_cache.json 等）以兼容历史项目。
+
+在模块测试阶段，可以编写简单的命令行脚本模拟 UI 回调。
+
+这样，我们可以一步一步稳定推进，避免之前“大改大崩”的情况。你确认这个清单和顺序后，我们就从模块1：参考音频管理器开始。
+```
 
 ### gui_launcher.py
 ```py
@@ -321,7 +451,7 @@ class App:
                 script = script_widget.get('1.0', 'end-1c').strip()
         else:
             # 一键成片模式：从预览文本框获取
-            script = self.simple_mode.preview_text.get('1.0', 'end-1c').strip()
+            script = self.simple_mode.story_tab.text_widget.get('1.0', 'end-1c').strip()
         self.audio_panel.set_script(script)
 
     # ---------- 视频模块 ----------
@@ -579,95 +709,109 @@ class App:
         folder = filedialog.askdirectory(title="选择历史工作目录")
         if not folder:
             return
-        header_path = os.path.join(folder, "header.txt")
-        shots_path = os.path.join(folder, "shots.txt")
-        para_path = os.path.join(folder, "paragraphs.json")
-        # 新流程：存在 header.txt 且 (shots.txt 或 paragraphs.json)
-        if not os.path.exists(header_path) or (not os.path.exists(shots_path) and not os.path.exists(para_path)):
-            messagebox.showerror("错误", "所选目录不是有效的工作目录（缺少 header.txt 且缺少 shots.txt 或 paragraphs.json）")
-            return
+        # 检测项目类型：如果存在 story.txt 或 metadata.json，则为一键成片项目
+        if os.path.exists(os.path.join(folder, "story.txt")) or os.path.exists(os.path.join(folder, "metadata.json")):
+            # 切换模式
+            self.toolbar.mode_type_var.set("一键成片")
+            self.on_mode_type_change()  # 触发界面切换
+            # 加载项目
+            self.simple_mode.load_project(folder)
+            self.work_dir = folder
+            self.status_label.config(text=f"已加载历史项目: {os.path.basename(folder)}")
+            self.dir_label.config(text=f"工作目录: {folder}")
+            self.log(f"已加载一键成片历史项目: {folder}")
+        else:
+            if not folder:
+                return
+            header_path = os.path.join(folder, "header.txt")
+            shots_path = os.path.join(folder, "shots.txt")
+            para_path = os.path.join(folder, "paragraphs.json")
+            # 新流程：存在 header.txt 且 (shots.txt 或 paragraphs.json)
+            if not os.path.exists(header_path) or (not os.path.exists(shots_path) and not os.path.exists(para_path)):
+                messagebox.showerror("错误", "所选目录不是有效的工作目录（缺少 header.txt 且缺少 shots.txt 或 paragraphs.json）")
+                return
 
-        try:
-            with open(header_path, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if line.startswith("project:"):
-                        self.story_title = line.split(":", 1)[1].strip()
-                        break
-            if not self.story_title:
+            try:
+                with open(header_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.startswith("project:"):
+                            self.story_title = line.split(":", 1)[1].strip()
+                            break
+                if not self.story_title:
+                    self.story_title = os.path.basename(folder)
+            except Exception:
                 self.story_title = os.path.basename(folder)
-        except Exception:
-            self.story_title = os.path.basename(folder)
-        self.work_dir = folder
-        self.is_history_project = True
-        self.status_label.config(text=f"已加载历史项目: {self.story_title}")
-        self.dir_label.config(text=f"工作目录: {self.work_dir}")
+            self.work_dir = folder
+            self.is_history_project = True
+            self.status_label.config(text=f"已加载历史项目: {self.story_title}")
+            self.dir_label.config(text=f"工作目录: {self.work_dir}")
 
-        # 字幕文件检测
-        srt_path = os.path.join(self.work_dir, "input.srt")
-        if os.path.exists(srt_path):
-            self.toolbar.subtitle_mode_var.set("有字幕")
-            self.standard_mode.upload_subtitle_btn.config(state='disabled')
-            # 若有字幕，可以启用对齐等按钮
-            # self.standard_mode.apply_duration_btn.config(state='normal')
-            # self.standard_mode.optimize_and_continue_btn.config(state='normal')
-            self.log("检测到已存在的字幕文件，可点击「应用字幕时长」或「优化并继续」")
-        else:
-            self.toolbar.subtitle_mode_var.set("无字幕")
-            self.standard_mode.upload_subtitle_btn.config(state='normal')
-            # self.standard_mode.apply_duration_btn.config(state='disabled')
-            # self.standard_mode.optimize_and_continue_btn.config(state='disabled')
-
-        # 尝试从易读版分镜文件获取镜头信息（如果有）
-        temp_manager = comfyui_manager.ComfyUIManager("", "")
-        readable_file = temp_manager.get_latest_readable_file(self.work_dir)
-        if readable_file:
-            self.shots_info = temp_manager.get_shots_info(readable_file)
-            if self.shots_info:
-                self.standard_mode.select_edit_btn.config(state='normal')
-                self.log(f"找到 {len(self.shots_info)} 个镜头（来自易读版），可点击「选择或编辑提示词」进行筛选")
+            # 字幕文件检测
+            srt_path = os.path.join(self.work_dir, "input.srt")
+            if os.path.exists(srt_path):
+                self.toolbar.subtitle_mode_var.set("有字幕")
+                self.standard_mode.upload_subtitle_btn.config(state='disabled')
+                # 若有字幕，可以启用对齐等按钮
+                # self.standard_mode.apply_duration_btn.config(state='normal')
+                # self.standard_mode.optimize_and_continue_btn.config(state='normal')
+                self.log("检测到已存在的字幕文件，可点击「应用字幕时长」或「优化并继续」")
             else:
-                self.shots_info = None
-                self.standard_mode.select_edit_btn.config(state='disabled')
-        else:
-            # 如果没有易读版，尝试从 shots.txt 解析（旧项目）
-            if os.path.exists(shots_path):
-                self.shots_info = self._parse_shots_from_txt(shots_path)
+                self.toolbar.subtitle_mode_var.set("无字幕")
+                self.standard_mode.upload_subtitle_btn.config(state='normal')
+                # self.standard_mode.apply_duration_btn.config(state='disabled')
+                # self.standard_mode.optimize_and_continue_btn.config(state='disabled')
+
+            # 尝试从易读版分镜文件获取镜头信息（如果有）
+            temp_manager = comfyui_manager.ComfyUIManager("", "")
+            readable_file = temp_manager.get_latest_readable_file(self.work_dir)
+            if readable_file:
+                self.shots_info = temp_manager.get_shots_info(readable_file)
                 if self.shots_info:
                     self.standard_mode.select_edit_btn.config(state='normal')
-                    self.log(f"找到 {len(self.shots_info)} 个镜头（来自 shots.txt），但尚未生成详细分镜，编辑功能可能受限")
+                    self.log(f"找到 {len(self.shots_info)} 个镜头（来自易读版），可点击「选择或编辑提示词」进行筛选")
                 else:
                     self.shots_info = None
                     self.standard_mode.select_edit_btn.config(state='disabled')
             else:
-                # 新流程：只有 paragraphs.json，尚未生成分镜
-                self.shots_info = None
-                self.standard_mode.select_edit_btn.config(state='disabled')
-                self.log("未找到分镜文件，请先通过音频模块生成字幕和分镜。")
+                # 如果没有易读版，尝试从 shots.txt 解析（旧项目）
+                if os.path.exists(shots_path):
+                    self.shots_info = self._parse_shots_from_txt(shots_path)
+                    if self.shots_info:
+                        self.standard_mode.select_edit_btn.config(state='normal')
+                        self.log(f"找到 {len(self.shots_info)} 个镜头（来自 shots.txt），但尚未生成详细分镜，编辑功能可能受限")
+                    else:
+                        self.shots_info = None
+                        self.standard_mode.select_edit_btn.config(state='disabled')
+                else:
+                    # 新流程：只有 paragraphs.json，尚未生成分镜
+                    self.shots_info = None
+                    self.standard_mode.select_edit_btn.config(state='disabled')
+                    self.log("未找到分镜文件，请先通过音频模块生成字幕和分镜。")
 
-        # 根据项目类型启用对应按钮
-        self.standard_mode.run_workflow_btn.config(state='normal', text="运行工作流")
-        self.standard_mode.first_frame_btn.config(state='normal')
-        self.standard_mode.align_btn.config(state='normal')
-        self.log(f"已加载历史工作目录: {self.work_dir}")
+            # 根据项目类型启用对应按钮
+            self.standard_mode.run_workflow_btn.config(state='normal', text="运行工作流")
+            self.standard_mode.first_frame_btn.config(state='normal')
+            self.standard_mode.align_btn.config(state='normal')
+            self.log(f"已加载历史工作目录: {self.work_dir}")
 
-        # 加载口播稿或段落到音频面板
-        if os.path.exists(para_path):
-            # 新项目，加载段落
-            print("[DEBUG] open_history_project: calling audio_panel.set_work_dir")
-            self.audio_panel.set_work_dir(self.work_dir)
-            print("[DEBUG] open_history_project: after set_work_dir")
-            # self.audio_panel.load_paragraphs(self.work_dir)
-            self.log("已加载段落，可进行音频生成")
-            # 启用预览段落按钮
-            self.standard_mode.preview_btn.config(state='normal')
-        else:
-            # 旧项目，尝试加载口播稿
-            script = self._load_script_from_history(self.work_dir)
-            if script:
-                self.audio_panel.set_script(script)
-                self.log("已自动加载口播稿到音频面板")
+            # 加载口播稿或段落到音频面板
+            if os.path.exists(para_path):
+                # 新项目，加载段落
+                print("[DEBUG] open_history_project: calling audio_panel.set_work_dir")
+                self.audio_panel.set_work_dir(self.work_dir)
+                print("[DEBUG] open_history_project: after set_work_dir")
+                # self.audio_panel.load_paragraphs(self.work_dir)
+                self.log("已加载段落，可进行音频生成")
+                # 启用预览段落按钮
+                self.standard_mode.preview_btn.config(state='normal')
             else:
-                self.log("未找到口播稿，请手动加载或生成")
+                # 旧项目，尝试加载口播稿
+                script = self._load_script_from_history(self.work_dir)
+                if script:
+                    self.audio_panel.set_script(script)
+                    self.log("已自动加载口播稿到音频面板")
+                else:
+                    self.log("未找到口播稿，请手动加载或生成")
 
     def _parse_shots_from_txt(self, shots_path):
         shots = []
@@ -1036,7 +1180,7 @@ class App:
 
     def processing_failed(self):
         self.processing = False
-        self.standard_mode.start_btn.config(state='normal')
+        self.standard_mode.split_btn.config(state='normal')   # 原 start_btn
         self.status_label.config(text="处理失败，请查看日志")
         messagebox.showerror("错误", "处理过程中出现错误，请查看日志")
 
@@ -1362,9 +1506,10 @@ if __name__ == "__main__":
 ### project_snapshot.txt
 ```
 # Project Snapshot
-Generated: 2026-03-30 14:35:33.396183
+Generated: 2026-03-31 10:04:23.422406
 
 ## Project Structure
+- audio整体改造清单.txt
 - gui_launcher.py
 - LTX2.3精准提示词.txt
 - project_snapshot.txt
@@ -1404,14 +1549,22 @@ Generated: 2026-03-30 14:35:33.396183
 - gui\simple_mode.py
 - gui\standard_mode.py
 - gui\step_manager.py
+- gui\story_wizard.py
 - gui\top_toolbar.py
 - gui\tts_tutorial.py
 - gui\ui_components.py
 - gui\workflow_executor.py
 - gui\__init__.py
-- gui\audio\retake_queue.py
+- gui\audio\retake_manager.py
 - gui\audio\segment_list.py
 - gui\audio\__init__.py
+- gui\simple\assets_tab.py
+- gui\simple\controller.py
+- gui\simple\data.py
+- gui\simple\prompts_tab.py
+- gui\simple\script_tab.py
+- gui\simple\story_tab.py
+- gui\simple\__init__.py
 - parsers\ai_response_cleaner.py
 - parsers\analysis_parser.py
 - parsers\base_batch_parser.py
@@ -1424,6 +1577,7 @@ Generated: 2026-03-30 14:35:33.396183
 - prompt_presets\emotional_default.txt
 - prompt_presets\mime2.txt
 - prompt_presets\mime_default.txt
+- prompt_presets\hardcore\历史时政深度稿.txt
 - tools\ffmpeg\LICENSE.txt
 - utils\ai_utils.py
 - utils\align_video_duration.py
@@ -1453,6 +1607,126 @@ Generated: 2026-03-30 14:35:33.396183
 - workflow_templates\__init__.py
 
 ## File Contents
+
+### audio整体改造清单.txt
+```
+模块化清单（按依赖关系排序）
+模块 1：参考音频管理器（core/audio/reference.py）
+
+职责：管理参考音频的上传、AI生成、Whisper转录、缓存读写。
+
+对外接口：
+
+upload_local(file_path) → 触发上传和转录，更新内部状态。
+
+ai_generate(text, voice_desc, work_dir) → 调用千问TTS生成音频，自动上传并转录。
+
+get_ref_audio_filename() → 返回服务器上的文件名（用于后续生成）。
+
+get_ref_text() → 返回参考文本。
+
+get_ref_audio_path() → 返回本地路径（用于界面显示）。
+
+测试：命令行模拟（提供本地文件、模拟AI生成），验证缓存文件正确生成。
+
+模块 2：段落润色器（core/audio/segment_labeler.py）
+
+职责：调用 audio_labeler.label_audio 将原始段落转换为带标签的片段列表。
+
+对外接口：
+
+generate_segments(paragraphs, callback) → 异步生成，完成后回调 (segments)。
+
+测试：传入测试段落，验证输出的 segments 结构和 labeled_text.txt。
+
+模块 3：音频生成控制器（core/audio/generation.py）
+
+职责：批量生成音频片段，管理队列、状态、重试、持久化、暂停/恢复/取消、进度回调。
+
+依赖模块1（参考音频信息）。
+
+对外接口：
+
+set_reference(ref_audio_filename, ref_text, language)
+
+add_task(index, text, callback)
+
+start() / pause() / resume() / cancel_all() / stop()
+
+set_progress_callback(callback)
+
+sync_existing_segment(index, audio_path, duration)（用于加载历史项目）
+
+测试：模拟生成单个片段，检查状态转换、重试、持久化文件。
+
+模块 4：播放控制器（core/audio/playback.py）
+
+职责：封装 pygame 播放逻辑，提供播放、暂停、停止、跳转、进度回调。
+
+对外接口：
+
+play(filepath, on_start=None, on_position=None, on_end=None)
+
+pause() / resume() / stop() / seek(seconds)
+
+测试：播放测试音频，验证回调。
+
+模块 5：字幕生成器（core/audio/subtitle.py）
+
+职责：调用阿里云语音识别生成字幕。
+
+对外接口：
+
+generate(audio_path, callback) → 异步生成，回调 (success, srt_path)
+
+测试：用本地音频测试，验证生成的 SRT 文件。
+
+模块 6：最终音频合成器（core/audio/final_combine.py）
+
+职责：将已确认的片段合并为最终音频，生成时间轴 JSON。
+
+对外接口：
+
+combine(confirmed_segments, callback) → 异步合并，回调 (success, final_audio_path)
+
+测试：提供几个片段，验证合并后的音频和时间轴。
+
+模块 7：重录管理器（可选，可暂缓）
+
+职责：管理重录请求（复用模块3的生成能力，但单独处理 UI 和文本修改）。
+
+可以放在 gui/audio/retake.py，因为涉及 UI 交互。
+
+或者简化：重录直接调用模块3的 reset_segment + add_task，不单独成模块。
+
+实施顺序建议
+模块1（参考音频管理器） → 命令行测试 → 接入 audio_panel。☑️
+
+模块3（音频生成控制器） → 命令行测试 → 接入 audio_panel（替换原有的批量生成逻辑）。☑️
+
+模块4（播放控制器） → 命令行测试 → 接入 audio_panel（替换 pygame 直接调用）。☑️
+
+模块2（段落润色器） → 命令行测试 → 接入 audio_panel。☑️
+
+模块5（字幕生成器） → 命令行测试 → 接入 audio_panel。☑️
+
+模块6（最终合成器） → 命令行测试 → 接入 audio_panel。☑️
+
+重录管理器最后处理（或直接复用模块3）。
+
+每个模块独立测试通过后，再修改 audio_panel.py 替换原有代码，确保功能不丢失。
+
+注意事项
+所有模块设计成“无 UI 依赖”，通过回调与 UI 通信。
+
+模块之间尽量解耦，通过明确的接口交互。
+
+保留原有工作目录的文件读写逻辑（segments_info.json, reference_cache.json 等）以兼容历史项目。
+
+在模块测试阶段，可以编写简单的命令行脚本模拟 UI 回调。
+
+这样，我们可以一步一步稳定推进，避免之前“大改大崩”的情况。你确认这个清单和顺序后，我们就从模块1：参考音频管理器开始。
+```
 
 ### gui_launcher.py
 ```py
@@ -1684,7 +1958,7 @@ class App:
                 script = script_widget.get('1.0', 'end-1c').strip()
         else:
             # 一键成片模式：从预览文本框获取
-            script = self.simple_mode.preview_text.get('1.0', 'end-1c').strip()
+            script = self.simple_mode.story_tab.text_widget.get('1.0', 'end-1c').strip()
         self.audio_panel.set_script(script)
 
     # ---------- 视频模块 ----------
@@ -1942,95 +2216,109 @@ class App:
         folder = filedialog.askdirectory(title="选择历史工作目录")
         if not folder:
             return
-        header_path = os.path.join(folder, "header.txt")
-        shots_path = os.path.join(folder, "shots.txt")
-        para_path = os.path.join(folder, "paragraphs.json")
-        # 新流程：存在 header.txt 且 (shots.txt 或 paragraphs.json)
-        if not os.path.exists(header_path) or (not os.path.exists(shots_path) and not os.path.exists(para_path)):
-            messagebox.showerror("错误", "所选目录不是有效的工作目录（缺少 header.txt 且缺少 shots.txt 或 paragraphs.json）")
-            return
+        # 检测项目类型：如果存在 story.txt 或 metadata.json，则为一键成片项目
+        if os.path.exists(os.path.join(folder, "story.txt")) or os.path.exists(os.path.join(folder, "metadata.json")):
+            # 切换模式
+            self.toolbar.mode_type_var.set("一键成片")
+            self.on_mode_type_change()  # 触发界面切换
+            # 加载项目
+            self.simple_mode.load_project(folder)
+            self.work_dir = folder
+            self.status_label.config(text=f"已加载历史项目: {os.path.basename(folder)}")
+            self.dir_label.config(text=f"工作目录: {folder}")
+            self.log(f"已加载一键成片历史项目: {folder}")
+        else:
+            if not folder:
+                return
+            header_path = os.path.join(folder, "header.txt")
+            shots_path = os.path.join(folder, "shots.txt")
+            para_path = os.path.join(folder, "paragraphs.json")
+            # 新流程：存在 header.txt 且 (shots.txt 或 paragraphs.json)
+            if not os.path.exists(header_path) or (not os.path.exists(shots_path) and not os.path.exists(para_path)):
+                messagebox.showerror("错误", "所选目录不是有效的工作目录（缺少 header.txt 且缺少 shots.txt 或 paragraphs.json）")
+                return
 
-        try:
-            with open(header_path, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if line.startswith("project:"):
-                        self.story_title = line.split(":", 1)[1].strip()
-                        break
-            if not self.story_title:
+            try:
+                with open(header_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.startswith("project:"):
+                            self.story_title = line.split(":", 1)[1].strip()
+                            break
+                if not self.story_title:
+                    self.story_title = os.path.basename(folder)
+            except Exception:
                 self.story_title = os.path.basename(folder)
-        except Exception:
-            self.story_title = os.path.basename(folder)
-        self.work_dir = folder
-        self.is_history_project = True
-        self.status_label.config(text=f"已加载历史项目: {self.story_title}")
-        self.dir_label.config(text=f"工作目录: {self.work_dir}")
+            self.work_dir = folder
+            self.is_history_project = True
+            self.status_label.config(text=f"已加载历史项目: {self.story_title}")
+            self.dir_label.config(text=f"工作目录: {self.work_dir}")
 
-        # 字幕文件检测
-        srt_path = os.path.join(self.work_dir, "input.srt")
-        if os.path.exists(srt_path):
-            self.toolbar.subtitle_mode_var.set("有字幕")
-            self.standard_mode.upload_subtitle_btn.config(state='disabled')
-            # 若有字幕，可以启用对齐等按钮
-            # self.standard_mode.apply_duration_btn.config(state='normal')
-            # self.standard_mode.optimize_and_continue_btn.config(state='normal')
-            self.log("检测到已存在的字幕文件，可点击「应用字幕时长」或「优化并继续」")
-        else:
-            self.toolbar.subtitle_mode_var.set("无字幕")
-            self.standard_mode.upload_subtitle_btn.config(state='normal')
-            # self.standard_mode.apply_duration_btn.config(state='disabled')
-            # self.standard_mode.optimize_and_continue_btn.config(state='disabled')
-
-        # 尝试从易读版分镜文件获取镜头信息（如果有）
-        temp_manager = comfyui_manager.ComfyUIManager("", "")
-        readable_file = temp_manager.get_latest_readable_file(self.work_dir)
-        if readable_file:
-            self.shots_info = temp_manager.get_shots_info(readable_file)
-            if self.shots_info:
-                self.standard_mode.select_edit_btn.config(state='normal')
-                self.log(f"找到 {len(self.shots_info)} 个镜头（来自易读版），可点击「选择或编辑提示词」进行筛选")
+            # 字幕文件检测
+            srt_path = os.path.join(self.work_dir, "input.srt")
+            if os.path.exists(srt_path):
+                self.toolbar.subtitle_mode_var.set("有字幕")
+                self.standard_mode.upload_subtitle_btn.config(state='disabled')
+                # 若有字幕，可以启用对齐等按钮
+                # self.standard_mode.apply_duration_btn.config(state='normal')
+                # self.standard_mode.optimize_and_continue_btn.config(state='normal')
+                self.log("检测到已存在的字幕文件，可点击「应用字幕时长」或「优化并继续」")
             else:
-                self.shots_info = None
-                self.standard_mode.select_edit_btn.config(state='disabled')
-        else:
-            # 如果没有易读版，尝试从 shots.txt 解析（旧项目）
-            if os.path.exists(shots_path):
-                self.shots_info = self._parse_shots_from_txt(shots_path)
+                self.toolbar.subtitle_mode_var.set("无字幕")
+                self.standard_mode.upload_subtitle_btn.config(state='normal')
+                # self.standard_mode.apply_duration_btn.config(state='disabled')
+                # self.standard_mode.optimize_and_continue_btn.config(state='disabled')
+
+            # 尝试从易读版分镜文件获取镜头信息（如果有）
+            temp_manager = comfyui_manager.ComfyUIManager("", "")
+            readable_file = temp_manager.get_latest_readable_file(self.work_dir)
+            if readable_file:
+                self.shots_info = temp_manager.get_shots_info(readable_file)
                 if self.shots_info:
                     self.standard_mode.select_edit_btn.config(state='normal')
-                    self.log(f"找到 {len(self.shots_info)} 个镜头（来自 shots.txt），但尚未生成详细分镜，编辑功能可能受限")
+                    self.log(f"找到 {len(self.shots_info)} 个镜头（来自易读版），可点击「选择或编辑提示词」进行筛选")
                 else:
                     self.shots_info = None
                     self.standard_mode.select_edit_btn.config(state='disabled')
             else:
-                # 新流程：只有 paragraphs.json，尚未生成分镜
-                self.shots_info = None
-                self.standard_mode.select_edit_btn.config(state='disabled')
-                self.log("未找到分镜文件，请先通过音频模块生成字幕和分镜。")
+                # 如果没有易读版，尝试从 shots.txt 解析（旧项目）
+                if os.path.exists(shots_path):
+                    self.shots_info = self._parse_shots_from_txt(shots_path)
+                    if self.shots_info:
+                        self.standard_mode.select_edit_btn.config(state='normal')
+                        self.log(f"找到 {len(self.shots_info)} 个镜头（来自 shots.txt），但尚未生成详细分镜，编辑功能可能受限")
+                    else:
+                        self.shots_info = None
+                        self.standard_mode.select_edit_btn.config(state='disabled')
+                else:
+                    # 新流程：只有 paragraphs.json，尚未生成分镜
+                    self.shots_info = None
+                    self.standard_mode.select_edit_btn.config(state='disabled')
+                    self.log("未找到分镜文件，请先通过音频模块生成字幕和分镜。")
 
-        # 根据项目类型启用对应按钮
-        self.standard_mode.run_workflow_btn.config(state='normal', text="运行工作流")
-        self.standard_mode.first_frame_btn.config(state='normal')
-        self.standard_mode.align_btn.config(state='normal')
-        self.log(f"已加载历史工作目录: {self.work_dir}")
+            # 根据项目类型启用对应按钮
+            self.standard_mode.run_workflow_btn.config(state='normal', text="运行工作流")
+            self.standard_mode.first_frame_btn.config(state='normal')
+            self.standard_mode.align_btn.config(state='normal')
+            self.log(f"已加载历史工作目录: {self.work_dir}")
 
-        # 加载口播稿或段落到音频面板
-        if os.path.exists(para_path):
-            # 新项目，加载段落
-            print("[DEBUG] open_history_project: calling audio_panel.set_work_dir")
-            self.audio_panel.set_work_dir(self.work_dir)
-            print("[DEBUG] open_history_project: after set_work_dir")
-            # self.audio_panel.load_paragraphs(self.work_dir)
-            self.log("已加载段落，可进行音频生成")
-            # 启用预览段落按钮
-            self.standard_mode.preview_btn.config(state='normal')
-        else:
-            # 旧项目，尝试加载口播稿
-            script = self._load_script_from_history(self.work_dir)
-            if script:
-                self.audio_panel.set_script(script)
-                self.log("已自动加载口播稿到音频面板")
+            # 加载口播稿或段落到音频面板
+            if os.path.exists(para_path):
+                # 新项目，加载段落
+                print("[DEBUG] open_history_project: calling audio_panel.set_work_dir")
+                self.audio_panel.set_work_dir(self.work_dir)
+                print("[DEBUG] open_history_project: after set_work_dir")
+                # self.audio_panel.load_paragraphs(self.work_dir)
+                self.log("已加载段落，可进行音频生成")
+                # 启用预览段落按钮
+                self.standard_mode.preview_btn.config(state='normal')
             else:
-                self.log("未找到口播稿，请手动加载或生成")
+                # 旧项目，尝试加载口播稿
+                script = self._load_script_from_history(self.work_dir)
+                if script:
+                    self.audio_panel.set_script(script)
+                    self.log("已自动加载口播稿到音频面板")
+                else:
+                    self.log("未找到口播稿，请手动加载或生成")
 
     def _parse_shots_from_txt(self, shots_path):
         shots = []
@@ -2399,7 +2687,7 @@ class App:
 
     def processing_failed(self):
         self.processing = False
-        self.standard_mode.start_btn.config(state='normal')
+        self.standard_mode.split_btn.config(state='normal')   # 原 start_btn
         self.status_label.config(text="处理失败，请查看日志")
         messagebox.showerror("错误", "处理过程中出现错误，请查看日志")
 
@@ -3585,7 +3873,7 @@ if __name__ == "__main__":
                 shot['prompt'] = orig.get('visual', '默认提示词')
                 print(f"⚠️ 镜头 {shot['id']} 提示词缺失，已用视觉描述填充，请检查并手动修改")
     if missing_report:
-        print("\n❌ 六元素检查发现缺失：")
+        print("\n[错误] 六元素检查发现缺失：")
         for msg in missing_report:
             print(f"   {msg}")
         print("💡 提示：上述缺失字段已用默认值填充，建议在后续编辑中手动修正。")
@@ -5921,18 +6209,9 @@ import threading
 from utils.audio_utils import FFMPEG
 
 class FinalAudioCombine:
-    def __init__(self, work_dir):
+    def __init__(self, work_dir, log_callback=None):
         self.work_dir = work_dir
-        self.log_callback = None   # 可选的日志回调
-
-    def set_log_callback(self, callback):
-        self.log_callback = callback
-
-    def _log(self, msg):
-        if self.log_callback:
-            self.log_callback(msg)
-        else:
-            print(msg)
+        self.log = log_callback or (lambda msg: print(msg))
 
     def combine(self, confirmed_segments, callback):
         """
@@ -5946,20 +6225,19 @@ class FinalAudioCombine:
                 for seg in confirmed_segments:
                     audio_file = seg.get('audio_file')
                     if not audio_file:
-                        self._log(f"警告：片段 {seg.get('index')} 没有音频文件，跳过")
+                        self.log(f"警告：片段 {seg.get('index')} 没有音频文件，跳过")
                         continue
                     audio_file = audio_file.replace('\\', '/')
                     if not os.path.exists(audio_file):
-                        self._log(f"警告：音频文件不存在 {audio_file}，跳过")
+                        self.log(f"警告：音频文件不存在 {audio_file}，跳过")
                         continue
                     rel_path = os.path.relpath(audio_file, self.work_dir).replace('\\', '/')
                     f.write(f"file '{rel_path}'\n")
 
             final_audio = os.path.join(self.work_dir, "final_audio.mp3")
             cmd = [str(FFMPEG), '-y', '-f', 'concat', '-safe', '0', '-i', concat_file, '-ar', '16000', '-c:a', 'libmp3lame', '-b:a', '128k', final_audio]
-            self._log("正在合成最终音频（ffmpeg），请稍候...")
+            self.log("正在合成最终音频（ffmpeg），请稍候...")
             try:
-                # 使用 Popen 实时捕获输出
                 process = subprocess.Popen(
                     cmd,
                     cwd=self.work_dir,
@@ -5972,28 +6250,27 @@ class FinalAudioCombine:
                 )
                 for line in process.stdout:
                     if line.strip():
-                        self._log(line.rstrip())
+                        self.log(line.rstrip())
                 process.wait()
                 if process.returncode == 0 and os.path.exists(final_audio):
-                    self._log(f"最终音频已保存: {final_audio}")
+                    self.log(f"最终音频已保存: {final_audio}")
                     # 生成时间轴
                     timeline = self._generate_timeline(confirmed_segments)
                     timeline_path = os.path.join(self.work_dir, "audio_timeline.json")
                     with open(timeline_path, 'w', encoding='utf-8') as f:
                         json.dump(timeline, f, ensure_ascii=False, indent=2)
-                    self._log(f"时间轴已保存: {timeline_path}")
+                    self.log(f"时间轴已保存: {timeline_path}")
                     callback(True, final_audio)
                 else:
-                    self._log(f"ffmpeg 合成失败，返回码: {process.returncode}")
+                    self.log(f"ffmpeg 合成失败，返回码: {process.returncode}")
                     callback(False, None)
             except Exception as e:
-                self._log(f"合成异常: {e}")
+                self.log(f"合成异常: {e}")
                 callback(False, None)
 
         threading.Thread(target=run, daemon=True).start()
 
     def _generate_timeline(self, confirmed_segments):
-        """生成时间轴列表"""
         timeline = []
         total_ms = 0
         for seg in confirmed_segments:
@@ -6489,219 +6766,124 @@ class PlaybackController:
 # core/audio/reference.py
 import os
 import json
-import re
-import threading
-import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext, ttk
+import time
+from typing import Optional
+
+# 导入底层 TTS 相关函数
 from core.fish_tts import extract_reference_text
 from core.qwen_tts import generate_reference_audio
 
+
 class ReferenceAudioManager:
-    def __init__(self, work_dir, log_callback=None):
+    """
+    参考音频管理器：管理参考音频的上传、转录、缓存。
+    不处理 UI，只提供同步方法，调用方需自行处理线程。
+    """
+
+    def __init__(self, work_dir: str, log_callback=None):
         self.work_dir = work_dir
         self.log = log_callback or (lambda msg: print(msg))
-        self.ref_audio_filename = None
-        self.ref_text = None
-        self.ref_audio_path = tk.StringVar()
+
+        self._ref_audio_filename = None   # 服务器上的文件名（如 "中年干练连珠炮.mp3"）
+        self._ref_text = None              # 参考文本
+        self._ref_audio_path = None        # 本地文件路径（用于界面显示）
+
         self._load_cache()
 
-    def _load_cache(self):
+    # ------------------ 公共接口 ------------------
+    def get_ref_audio_filename(self) -> Optional[str]:
+        return self._ref_audio_filename
+
+    def get_ref_text(self) -> Optional[str]:
+        return self._ref_text
+
+    def get_ref_audio_path(self) -> Optional[str]:
+        return self._ref_audio_path
+
+    def set_from_local(self, local_path: str) -> bool:
+        """
+        从本地音频文件设置参考音频（上传并转录）。
+        返回是否成功。
+        """
+        if not os.path.exists(local_path):
+            self.log(f"文件不存在: {local_path}")
+            return False
+
+        self.log(f"正在上传并转录参考音频: {local_path}")
+        try:
+            cache = extract_reference_text(self.work_dir, local_path)
+            if cache:
+                self._ref_audio_filename = cache["audio_filename"]
+                self._ref_text = cache["reference_text"]
+                self._ref_audio_path = local_path
+                self._save_cache()
+                self.log("参考音频上传并转录成功")
+                return True
+            else:
+                self.log("参考音频上传或转录失败")
+                return False
+        except Exception as e:
+            self.log(f"参考音频处理异常: {e}")
+            return False
+
+    def clear(self):
+        """清除当前参考音频信息并删除缓存文件"""
+        self._ref_audio_filename = None
+        self._ref_text = None
+        self._ref_audio_path = None
         cache_path = os.path.join(self.work_dir, "reference_cache.json")
         if os.path.exists(cache_path):
             try:
-                with open(cache_path, 'r', encoding='utf-8') as f:
-                    cache = json.load(f)
-                self.ref_audio_filename = cache.get("audio_filename")
-                self.ref_text = cache.get("reference_text")
-                if self.ref_audio_filename and self.ref_text:
-                    self.log("已从缓存加载参考音频信息")
+                os.remove(cache_path)
+                self.log("已删除参考音频缓存")
             except Exception as e:
-                self.log(f"加载参考缓存失败: {e}")
+                self.log(f"删除缓存文件失败: {e}")
 
-    def upload_local(self):
-        file_path = filedialog.askopenfilename(filetypes=[("Audio files", "*.mp3 *.wav")])
-        if file_path:
-            self.ref_audio_path.set(file_path.replace('\\', '/'))
-            self.log("已选择参考音频: " + self.ref_audio_path.get())
-            self._extract_text()
-
-    def _extract_text(self):
-        ref_audio_local = self.ref_audio_path.get()
-        if not ref_audio_local:
-            return
-        self.log("正在上传参考音频并提取文本...")
-        try:
-            cache = extract_reference_text(self.work_dir, ref_audio_local)
-            if cache:
-                self.ref_audio_filename = cache["audio_filename"]
-                self.ref_text = cache["reference_text"]
-                self.log("参考文本提取成功")
-            else:
-                self.log("参考文本提取失败")
-        except Exception as e:
-            self.log(f"提取参考文本异常: {e}")
-
-    def ai_generate(self, parent_window=None):
-        """弹出AI生成参考音频窗口"""
-        import re
-        if not self.work_dir:
-            messagebox.showerror("错误", "请先设置工作目录")
-            return
-
-        # 加载原始口播稿文本
-        para_path = os.path.join(self.work_dir, "paragraphs.json")
-        if os.path.exists(para_path):
-            with open(para_path, 'r', encoding='utf-8') as f:
-                paragraphs = json.load(f)
-            raw_text = "\n\n".join(paragraphs)
-        else:
-            messagebox.showerror("错误", "未找到原始口播稿文件 paragraphs.json")
-            return
-
-        # 提取前几句作为预览文本
-        sentences = re.split(r'[。！？]', raw_text)
-        if len(sentences) >= 3:
-            preview_text = '。'.join(sentences[:3]) + '。'
-        else:
-            preview_text = raw_text[:200]
-
-        # 创建窗口
-        win = tk.Toplevel(parent_window)
-        win.title("AI生成参考音频")
-        win.geometry("700x600")
-        win.update_idletasks()
-        screen_width = win.winfo_screenwidth()
-        screen_height = win.winfo_screenheight()
-        x = (screen_width - 700) // 2
-        y = (screen_height - 600) // 2
-        win.geometry(f"+{x}+{y}")
-        win.transient(parent_window)
-        win.grab_set()
-
-        # 语音描述输入
-        ttk.Label(win, text="语音描述（如“语速很快，中年男性，声音干练”）:").pack(anchor='w', padx=10, pady=5)
-        voice_entry = ttk.Entry(win, width=60)
-        voice_entry.pack(fill='x', padx=10, pady=5)
-
-        # 文本预览
-        ttk.Label(win, text="朗读文本（自动从口播稿提取前几句）:").pack(anchor='w', padx=10, pady=5)
-        text_edit = scrolledtext.ScrolledText(win, height=8, wrap='word')
-        text_edit.insert('1.0', preview_text)
-        text_edit.pack(fill='both', expand=True, padx=10, pady=5)
-
-        # 生成结果区域
-        result_frame = ttk.LabelFrame(win, text="生成结果", padding=5)
-        result_frame.pack(fill='x', padx=10, pady=10)
-
-        status_var = tk.StringVar(value="未生成")
-        ttk.Label(result_frame, textvariable=status_var, foreground='blue').pack(anchor='w')
-        audio_path_var = tk.StringVar()
-        ttk.Entry(result_frame, textvariable=audio_path_var, state='readonly', width=60).pack(fill='x', padx=5, pady=2)
-
-        btn_row = ttk.Frame(result_frame)
-        btn_row.pack(pady=5)
-        play_btn = ttk.Button(btn_row, text="播放", state='disabled', command=lambda: self._play_audio(audio_path_var.get()))
-        play_btn.pack(side='left', padx=5)
-
-        def open_history():
-            if not self.work_dir:
-                messagebox.showerror("错误", "工作目录未设置")
-                return
-            file_path = filedialog.askopenfilename(
-                title="选择预览音频文件",
-                initialdir=self.work_dir,
-                filetypes=[("MP3 files", "*.mp3"), ("All files", "*.*")]
-            )
-            if file_path:
-                self.ref_audio_path.set(file_path)
-                audio_path_var.set(file_path)
-                status_var.set("已加载历史预览")
-                play_btn.config(state='normal')
-
-        history_btn = ttk.Button(btn_row, text="打开历史预览", command=open_history)
-        history_btn.pack(side='left', padx=5)
-
-        def do_generate():
-            voice_desc = voice_entry.get().strip()
-            if not voice_desc:
-                messagebox.showwarning("提示", "请填写语音描述")
-                return
-            text_to_read = text_edit.get('1.0', 'end-1c').strip()
-            if not text_to_read:
-                messagebox.showwarning("提示", "朗读文本不能为空")
-                return
-            gen_btn.config(state='disabled', text="生成中...")
-            status_var.set("正在生成音频，请稍候...")
-            win.update()
-
-            def run():
-                try:
-                    audio_path = generate_reference_audio(text_to_read, voice_desc, self.work_dir)
-                    if audio_path:
-                        audio_path_var.set(audio_path)
-                        status_var.set("生成成功！")
-                        play_btn.config(state='normal')
-                        self.log("AI生成参考音频成功: " + audio_path)
-                        # 更新内部变量
-                        self.ref_audio_filename = os.path.basename(audio_path)
-                        self.ref_text = text_to_read
-                        self._save_cache()
-                    else:
-                        status_var.set("生成失败，请检查日志")
-                except Exception as e:
-                    status_var.set(f"生成异常: {e}")
-                finally:
-                    win.after(0, lambda: gen_btn.config(state='normal', text="生成"))
-
-            threading.Thread(target=run, daemon=True).start()
-
-        gen_btn = ttk.Button(win, text="生成", command=do_generate)
-        gen_btn.pack(pady=5)
-
-        def confirm():
-            path = audio_path_var.get()
-            if not path:
-                messagebox.showwarning("提示", "尚未生成或生成失败，无法确认")
-                return
-            # 上传音频并提取文本（调用 Whisper）
-            from core.fish_tts import extract_reference_text
-            cache = extract_reference_text(self.work_dir, path)
-            if cache:
-                self.ref_audio_filename = cache["audio_filename"]  # 服务器文件名
-                self.ref_text = cache["reference_text"]
-                self._save_cache()
-                self.log("参考音频已上传并提取文本")
-            else:
-                self.log("警告：参考音频上传或文本提取失败，使用本地文件名（可能导致后续失败）")
-                self.ref_audio_filename = os.path.basename(path)
-                self.ref_text = text_edit.get('1.0', 'end-1c').strip()
-                self._save_cache()
-            self.ref_audio_path.set(path)
-            self.log("已使用AI生成的参考音频: " + path)
-            win.destroy()
-
-        ttk.Button(win, text="确认使用", command=confirm).pack(pady=5)
-        ttk.Button(win, text="取消", command=win.destroy).pack(pady=5)
-
-    def _play_audio(self, path):
-        # 这里需要调用外部播放器，可以通过回调实现
-        if hasattr(self, 'on_play_requested'):
-            self.on_play_requested(path)
-
-    def get_ref_audio_filename(self):
-        return self.ref_audio_filename
-
-    def get_ref_text(self):
-        return self.ref_text
-
-    def get_ref_audio_path(self):
-        return self.ref_audio_path.get()
-    
-    def _save_cache(self):
+    # ------------------ 私有方法 ------------------
+    def _load_cache(self):
+        """从工作目录加载缓存文件"""
         cache_path = os.path.join(self.work_dir, "reference_cache.json")
-        cache = {"audio_filename": self.ref_audio_filename, "reference_text": self.ref_text}
-        with open(cache_path, 'w', encoding='utf-8') as f:
-            json.dump(cache, f, ensure_ascii=False, indent=2)
+        if not os.path.exists(cache_path):
+            return
+
+        try:
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            self._ref_audio_filename = data.get("audio_filename")
+            self._ref_text = data.get("reference_text")
+            # 注意：本地路径不在缓存中，需要尝试推导
+            if self._ref_audio_filename:
+                # 尝试在 input 目录下找，但这里无法获取，先置为 None
+                # 实际路径可由调用方另行提供
+                self._ref_audio_path = None
+            self.log("已加载参考音频缓存")
+        except Exception as e:
+            self.log(f"加载参考音频缓存失败: {e}")
+
+    def _save_cache(self):
+        """保存当前参考音频信息到缓存文件"""
+        cache = {
+            "audio_filename": self._ref_audio_filename,
+            "reference_text": self._ref_text
+        }
+        cache_path = os.path.join(self.work_dir, "reference_cache.json")
+        try:
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(cache, f, ensure_ascii=False, indent=2)
+            self.log("参考音频缓存已保存")
+        except Exception as e:
+            self.log(f"保存参考音频缓存失败: {e}")
+
+
+# 为了与旧代码兼容，提供一些辅助函数（可选）
+def extract_reference_text_wrapper(work_dir, audio_path):
+    """包装 extract_reference_text，用于旧代码迁移"""
+    return extract_reference_text(work_dir, audio_path)
+
+
+def generate_reference_audio_wrapper(text, voice_description, work_dir):
+    """包装 generate_reference_audio，用于旧代码迁移"""
+    return generate_reference_audio(text, voice_description, work_dir)
 ```
 
 ### core\audio\segment_labeler.py
@@ -6723,11 +6905,14 @@ class SegmentLabeler:
         """
         def task():
             try:
+                self.log("开始生成润色片段...")
                 full_text = "\n\n".join(paragraphs)
                 temp_script_path = os.path.join(self.work_dir, "temp_script.txt")
                 with open(temp_script_path, 'w', encoding='utf-8') as f:
                     f.write(full_text)
+                self.log("临时文件已写入，开始调用 label_audio...")
                 segments = label_audio(self.work_dir, temp_script_path)
+                self.log("label_audio 调用完成，获得 {} 个片段".format(len(segments) if segments else 0))
                 on_complete(segments)
             except Exception as e:
                 self.log(f"段落润色异常: {e}")
@@ -6795,6 +6980,10 @@ from core.audio.playback import PlaybackController
 from core.audio.subtitle import SubtitleGenerator
 from core.audio.reference import ReferenceAudioManager
 from core.audio.generation import AudioGenerationController
+from gui.tts_tutorial import TUTORIAL_CONTENT
+from core.audio.segment_labeler import SegmentLabeler
+from core.audio.final_combine import FinalAudioCombine
+from gui.audio.retake_manager import RetakeManager
 
 # 尝试导入 pygame 用于播放
 try:
@@ -6840,20 +7029,17 @@ class AudioPanel(ttk.Frame):
         self.ref_audio_filename = None
         self.ref_text = None
         self.segments = []
-        self.retake_queue = []
         self.paragraphs = []
-        self.retake_thread = None
         self.running = False
         self.stop_requested = False
-        self.next_retake_index = 0
         self.reminder_window = None
         self.language_var = tk.StringVar(value="auto")
         self._work_dir_set = None
         self._loaded = False
         self.has_labeled_segments = False
-        self.retake_thread_running = True
-        # self.retake_thread = threading.Thread(target=self._process_retake_queue, daemon=True)
-        # self.retake_thread.start()
+        self.reference_manager = None
+        self.segment_labeler = None
+        self.retake_manager = None
 
         # 播放器相关
         self.player_available = PLAYER_AVAILABLE
@@ -7084,6 +7270,23 @@ class AudioPanel(ttk.Frame):
             timestamp = time.strftime("[%H:%M:%S] ")
             print(timestamp + msg)
 
+    def _on_retake_confirm(self, original_index, audio_path, duration, new_text):
+        """重录确认后更新原片段"""
+        for seg in self.segments:
+            if seg['index'] == original_index:
+                seg['audio_file'] = audio_path
+                seg['duration'] = duration
+                seg['text'] = new_text
+                seg['confirmed'] = True
+                seg['status_var'].set("已确认")
+                seg['play_btn'].config(state='normal', command=lambda p=audio_path: self.play_audio(p))
+                seg['retake_btn'].config(state='disabled')
+                seg['confirm_btn'].config(state='disabled')
+                preview = new_text[:60] + '...' if len(new_text) > 60 else new_text
+                seg['preview_label'].config(text=preview)
+                break
+        self.check_all_confirmed()
+
     def set_work_dir(self, work_dir):
         if self.work_dir == work_dir:
             print("[DEBUG] Already set, skipping")
@@ -7092,8 +7295,9 @@ class AudioPanel(ttk.Frame):
 
         self.subtitle_generator = SubtitleGenerator(work_dir, log_callback=self.log)
         self.reference_manager = ReferenceAudioManager(work_dir, log_callback=self.log)
-        self.reference_manager.on_play_requested = self.play_audio
-        self.ref_audio_path.set(self.reference_manager.get_ref_audio_path())
+        self.segment_labeler = SegmentLabeler(work_dir, log_callback=self.log)
+        self.final_combiner = FinalAudioCombine(work_dir, log_callback=self.log)
+        self.ref_audio_path.set(self.reference_manager.get_ref_audio_path() or "")
         self.ref_audio_filename = self.reference_manager.get_ref_audio_filename()
         self.ref_text = self.reference_manager.get_ref_text()
 
@@ -7106,6 +7310,17 @@ class AudioPanel(ttk.Frame):
         )
         self.gen_controller.set_progress_callback(self._on_generation_progress)
         self.gen_controller.start()
+
+        self.retake_manager = RetakeManager(
+            work_dir,
+            self.ref_audio_filename,
+            self.ref_text,
+            self.language_var.get(),
+            self.log,
+            self.play_audio
+        )
+        self.retake_manager.set_retake_scrollable(self.retake_scrollable)
+        self.retake_manager.on_segment_updated = self._on_retake_confirm
 
         if self.load_segments_from_labeled_text(work_dir):
             self.log("已从历史项目加载已有分段，无需重新润色")
@@ -7325,26 +7540,150 @@ class AudioPanel(ttk.Frame):
         if not self.reference_manager:
             messagebox.showerror("错误", "请先设置工作目录")
             return
-        self.reference_manager.upload_local()
-        self.ref_audio_path.set(self.reference_manager.get_ref_audio_path())
-        self.ref_audio_filename = self.reference_manager.get_ref_audio_filename()
-        self.ref_text = self.reference_manager.get_ref_text()
+        file_path = filedialog.askopenfilename(filetypes=[("Audio files", "*.mp3 *.wav")])
+        if not file_path:
+            return
+
+        # 更新界面显示路径
+        self.ref_audio_path.set(file_path)
+        self.log("正在上传参考音频并提取文本，请稍候...")
+
+        def task():
+            success = self.reference_manager.set_from_local(file_path)
+            self.after(0, lambda: self._on_ref_audio_uploaded(success, file_path))
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _on_ref_audio_uploaded(self, success, file_path):
+        if success:
+            # 更新 UI 变量
+            self.ref_audio_path.set(file_path)
+            self.ref_audio_filename = self.reference_manager.get_ref_audio_filename()
+            self.ref_text = self.reference_manager.get_ref_text()
+            self.log("参考音频已成功上传并提取文本")
+        else:
+            self.log("参考音频上传或文本提取失败")
 
     def ai_generate_audio(self):
         """弹出AI生成参考音频窗口"""
         if not self.work_dir:
             messagebox.showerror("错误", "请先设置工作目录")
             return
-        self.reference_manager.ai_generate(parent_window=self)
-        # 窗口关闭后，强制同步参考音频路径到界面
-        path = self.reference_manager.get_ref_audio_path()
-        if path:
-            self.ref_audio_path.set(path)
-            self.ref_audio_filename = self.reference_manager.get_ref_audio_filename()
-            self.ref_text = self.reference_manager.get_ref_text()
-            self.log(f"已同步参考音频: {path}")
+        if not hasattr(self, 'script_text') or not self.script_text:
+            messagebox.showerror("错误", "请先加载口播稿")
+            return
+
+        win = tk.Toplevel(self)
+        win.title("AI生成参考音频")
+        win.geometry("700x600")
+        win.update_idletasks()
+        screen_width = win.winfo_screenwidth()
+        screen_height = win.winfo_screenheight()
+        x = (screen_width - 700) // 2
+        y = (screen_height - 600) // 2
+        win.geometry(f"+{x}+{y}")
+        win.transient(self)
+        win.grab_set()
+
+        # 语音描述输入
+        ttk.Label(win, text="语音描述（如“语速很快，中年男性，声音干练”）:").pack(anchor='w', padx=10, pady=5)
+        voice_entry = ttk.Entry(win, width=60)
+        voice_entry.pack(fill='x', padx=10, pady=5)
+
+        # 教程按钮
+        btn_frame_tutorial = ttk.Frame(win)
+        btn_frame_tutorial.pack(fill='x', padx=10, pady=2)
+        ttk.Button(btn_frame_tutorial, text="提示词详细教程", command=self.open_tts_tutorial).pack(side='right')
+
+        # 朗读文本编辑框
+        ttk.Label(win, text="朗读文本（自动从口播稿提取前几句）:").pack(anchor='w', padx=10, pady=5)
+        text_edit = scrolledtext.ScrolledText(win, height=8, wrap='word')
+        sentences = re.split(r'[。！？]', self.script_text)
+        if len(sentences) >= 3:
+            preview_text = '。'.join(sentences[:3]) + '。'
         else:
-            self.log("未获取到参考音频路径")
+            preview_text = self.script_text[:200]
+        text_edit.insert('1.0', preview_text)
+        text_edit.pack(fill='both', expand=True, padx=10, pady=5)
+
+        # 生成结果区域
+        result_frame = ttk.LabelFrame(win, text="生成结果", padding=5)
+        result_frame.pack(fill='x', padx=10, pady=10)
+        status_var = tk.StringVar(value="未生成")
+        ttk.Label(result_frame, textvariable=status_var, foreground='blue').pack(anchor='w')
+        audio_path_var = tk.StringVar()
+        ttk.Entry(result_frame, textvariable=audio_path_var, state='readonly', width=60).pack(fill='x', padx=5, pady=2)
+
+        btn_row = ttk.Frame(result_frame)
+        btn_row.pack(pady=5)
+        play_btn = ttk.Button(btn_row, text="播放", state='disabled',
+                            command=lambda: self.play_audio(audio_path_var.get()))
+        play_btn.pack(side='left', padx=5)
+
+        def open_history():
+            if not self.work_dir:
+                messagebox.showerror("错误", "工作目录未设置")
+                return
+            file_path = filedialog.askopenfilename(
+                title="选择预览音频文件",
+                initialdir=self.work_dir,
+                filetypes=[("MP3 files", "*.mp3"), ("All files", "*.*")]
+            )
+            if file_path:
+                audio_path_var.set(file_path)
+                status_var.set("已加载历史预览")
+                play_btn.config(state='normal')
+
+        history_btn = ttk.Button(btn_row, text="打开历史预览", command=open_history)
+        history_btn.pack(side='left', padx=5)
+
+        def do_generate():
+            voice_desc = voice_entry.get().strip()
+            if not voice_desc:
+                messagebox.showwarning("提示", "请填写语音描述")
+                return
+            text_to_read = text_edit.get('1.0', 'end-1c').strip()
+            if not text_to_read:
+                messagebox.showwarning("提示", "朗读文本不能为空")
+                return
+            gen_btn.config(state='disabled', text="生成中...")
+            status_var.set("正在生成音频，约1分钟，请稍候...")
+            win.update()
+
+            def run():
+                try:
+                    audio_path = generate_reference_audio(text_to_read, voice_desc, self.work_dir)
+                    if audio_path:
+                        audio_path_var.set(audio_path)
+                        status_var.set("生成成功！")
+                        play_btn.config(state='normal')
+                        self.log("AI生成参考音频成功: " + audio_path)
+                    else:
+                        status_var.set("生成失败，请检查日志")
+                except Exception as e:
+                    status_var.set(f"生成异常: {e}")
+                finally:
+                    win.after(0, lambda: gen_btn.config(state='normal', text="生成"))
+
+            threading.Thread(target=run, daemon=True).start()
+
+        gen_btn = ttk.Button(win, text="生成", command=do_generate)
+        gen_btn.pack(pady=5)
+
+        def confirm():
+            path = audio_path_var.get()
+            if not path:
+                messagebox.showwarning("提示", "尚未生成或生成失败，无法确认")
+                return
+            win.destroy()
+            self.log("正在上传参考音频并提取文本...")
+            def task():
+                success = self.reference_manager.set_from_local(path)
+                self.after(0, lambda: self._on_ref_audio_uploaded(success, path))
+            threading.Thread(target=task, daemon=True).start()
+
+        ttk.Button(win, text="确认使用", command=confirm).pack(pady=5)
+        ttk.Button(win, text="取消", command=win.destroy).pack(pady=5)
 
     def open_tts_tutorial(self):
         win = tk.Toplevel(self)
@@ -7365,10 +7704,12 @@ class AudioPanel(ttk.Frame):
         if not self.paragraphs and not self.has_labeled_segments:
             messagebox.showerror("错误", "未加载段落，请先执行段落分割")
             return
+
         if self.has_labeled_segments:
             answer = messagebox.askyesno("确认", "已有润色后的段落，重新润色将覆盖现有音频片段，是否继续？\n")
             if not answer:
                 return
+            # 删除旧文件
             labeled_path = os.path.join(self.work_dir, "labeled_text.txt")
             json_path = os.path.join(self.work_dir, "segments_info.json")
             if os.path.exists(labeled_path):
@@ -7378,17 +7719,10 @@ class AudioPanel(ttk.Frame):
             self.has_labeled_segments = False
             self.gen_seg_btn.config(text="段落自动润色")
             self.load_paragraphs(self.work_dir)
-        self.log("正在对段落进行润色和切分，请稍候...")
-        threading.Thread(target=self._generate_segments_async, daemon=True).start()
 
-    def _generate_segments_async(self):
-        try:
-            full_text = "\n\n".join(self.paragraphs)
-            temp_script_path = os.path.join(self.work_dir, "temp_script.txt")
-            with open(temp_script_path, 'w', encoding='utf-8') as f:
-                f.write(full_text)
-            from core.audio_labeler import label_audio
-            segments = label_audio(self.work_dir, temp_script_path)
+        self.log("正在对段落进行润色和切分，请稍候...")
+
+        def on_complete(segments):
             if segments:
                 self.app.root.after(0, self.load_segments_from_json)
                 self.app.root.after(0, lambda: self.log("段落润色完成"))
@@ -7396,9 +7730,8 @@ class AudioPanel(ttk.Frame):
                 self.app.root.after(0, lambda: self.gen_seg_btn.config(text="重新润色"))
             else:
                 self.app.root.after(0, lambda: self.log("段落润色失败"))
-        except Exception as e:
-            self.app.root.after(0, lambda: self.log(f"段落润色异常: {e}"))
 
+        self.segment_labeler.generate_segments(self.paragraphs, on_complete)
     def load_segments_from_json(self):
         json_path = os.path.join(self.work_dir, "segments_info.json")
         if not os.path.exists(json_path):
@@ -7484,8 +7817,10 @@ class AudioPanel(ttk.Frame):
             self.log("已有生成任务在运行")
             return
         if self.gen_controller:
-            self.gen_controller.ref_audio_filename = self.reference_manager.get_ref_audio_filename()
-            self.gen_controller.ref_text = self.reference_manager.get_ref_text()
+            self.ref_audio_filename = self.reference_manager.get_ref_audio_filename()
+            self.ref_text = self.reference_manager.get_ref_text()
+            self.gen_controller.ref_audio_filename = self.ref_audio_filename
+            self.gen_controller.ref_text = self.ref_text
             self.gen_controller.language = self.language_var.get()
         else:
             self.log("错误：控制器未初始化")
@@ -7507,91 +7842,6 @@ class AudioPanel(ttk.Frame):
         self.running = False
         self.start_btn.config(state='normal')
         self.stop_btn.config(state='disabled')
-
-    def _process_retake_queue(self):
-        while self.retake_thread_running:
-            if not self.retake_queue:
-                time.sleep(0.5)
-                continue
-            item = self.retake_queue.pop(0)
-            self.log(f"开始重录片段 {item['original_index']} ...")
-            if item['new_text'] is not None:
-                final_text = item['new_text']
-            else:
-                final_text = self.ai_modify_text(item['original_text'], item['problem_desc'])
-            retake_idx = self.next_retake_index
-            self.next_retake_index += 1
-            audio_path = generate_single(
-                text=final_text,
-                index=retake_idx,
-                output_dir=self.work_dir,
-                ref_audio_filename=self.ref_audio_filename,
-                ref_text=self.ref_text,
-                language=self.language_var.get()
-            )
-            if audio_path:
-                duration = get_audio_duration(audio_path)
-                self.after(0, lambda: self.add_retake_item(item, audio_path, duration, final_text, retake_idx))
-            else:
-                self.log(f"重录失败: {item['original_text'][:30]}...")
-                row_frame = item.get('row_frame')
-                if row_frame and hasattr(row_frame, 'pending_info'):
-                    row_frame.pending_info['status_label'].config(text="失败", foreground='red')
-
-    def ai_modify_text(self, original_text, problem_desc):
-        prompt = f"""
-原始文本（带 Fish S2 标签）：
-{original_text}
-
-用户反馈：{problem_desc}
-
-请根据反馈修改文本，保持原有结构（仍包含 `[标签]` 和 `[inhale]`），只修改语气、语速、情感等相关内容。输出修改后的文本。
-"""
-        try:
-            new_text = call_deepseek(prompt, temperature=0.7)
-            return new_text
-        except Exception as e:
-            self.log(f"AI修改文本失败: {e}")
-            return original_text
-
-    def add_retake_item(self, item, audio_path, duration, new_text, retake_idx):
-        self.log(f"重录完成（序号{retake_idx}）: {new_text[:30]}... 时长 {duration:.2f}s")
-        row_frame = item.get('row_frame')
-        if row_frame and hasattr(row_frame, 'pending_info'):
-            info = row_frame.pending_info
-            preview = new_text[:30] + '...' if len(new_text) > 30 else new_text
-            info['label_desc'].config(text=preview)
-            info['status_label'].config(text="已生成", foreground='green')
-            info['play_btn'].config(state='normal', command=lambda p=audio_path: self.play_audio(p))
-            info['confirm_btn'].config(state='normal', command=lambda: self.confirm_retake(item, audio_path, duration, new_text, retake_idx, row_frame))
-            row_frame.retake_result = {
-                'audio_path': audio_path,
-                'duration': duration,
-                'new_text': new_text,
-                'retake_idx': retake_idx
-            }
-        else:
-            self._add_retake_row(item, audio_path, duration, new_text, retake_idx)
-
-    def _add_retake_row(self, item, audio_path, duration, new_text, retake_idx):
-        self.log(f"重录完成（序号{retake_idx}）: {new_text[:30]}... 时长 {duration:.2f}s")
-        row_frame = ttk.Frame(self.retake_scrollable)
-        row_frame.pack(fill='x', pady=2)
-        ttk.Label(row_frame, text=f"原片段{item['original_index']}", width=12).pack(side='left')
-        problem = item['problem_desc'][:30] + '...' if len(item['problem_desc']) > 30 else item['problem_desc']
-        ttk.Label(row_frame, text=problem, width=40, wraplength=300).pack(side='left', padx=5)
-        play_btn = ttk.Button(row_frame, text="播放", command=lambda: self.play_audio(audio_path))
-        play_btn.pack(side='left', padx=2)
-        confirm_btn = ttk.Button(row_frame, text="确认", command=lambda: self.confirm_retake(item, audio_path, duration, new_text, retake_idx, row_frame))
-        confirm_btn.pack(side='left', padx=2)
-        row_frame.retake_info = {
-            'item': item,
-            'audio_path': audio_path,
-            'duration': duration,
-            'new_text': new_text,
-            'retake_idx': retake_idx
-        }
-
     def update_segment_status(self, idx, status):
         for seg in self.segments:
             if seg.get('index') == idx:
@@ -7704,57 +7954,23 @@ class AudioPanel(ttk.Frame):
         win.transient(self)
         win.grab_set()
         self._retake_dialog_win = win
+
         ttk.Label(win, text="带标签的原文（可直接修改）:").pack(anchor='w', padx=10, pady=5)
         text_edit = scrolledtext.ScrolledText(win, height=12, wrap='word')
         text_edit.insert('1.0', seg['text'])
         text_edit.pack(fill='both', expand=True, padx=10, pady=5)
+
         ttk.Label(win, text="修改意见（如“语速太慢”、“语气不够激昂”）:").pack(anchor='w', padx=10, pady=5)
         problem_entry = ttk.Entry(win, width=60)
         problem_entry.pack(fill='x', padx=10, pady=5)
+
         btn_frame = ttk.Frame(win)
         btn_frame.pack(pady=10)
-        def submit():
-            new_text = text_edit.get('1.0', 'end-1c').strip()
-            problem = problem_entry.get().strip()
-            if new_text == seg['text'] and not problem:
-                messagebox.showwarning("提示", "请修改原文或输入修改意见")
-                return
-            win.destroy()
-            self._retake_dialog_win = None
-            final_text = new_text if new_text != seg['text'] else None
-            self._add_retake_pending_item(seg['index'], final_text, problem)
+
+        submit = self.retake_manager.request_retake(idx, seg, text_edit, problem_entry, win)
+
         ttk.Button(btn_frame, text="提交", command=submit).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="取消", command=lambda: (win.destroy(), setattr(self, '_retake_dialog_win', None))).pack(side='left', padx=5)
-
-    def _add_retake_pending_item(self, original_index, final_text, problem_desc):
-        row_frame = ttk.Frame(self.retake_scrollable)
-        row_frame.pack(fill='x', pady=2)
-        ttk.Label(row_frame, text=f"原片段{original_index}", width=12).pack(side='left')
-        label_desc = ttk.Label(row_frame, text="生成中...", width=40, wraplength=300)
-        label_desc.pack(side='left', padx=5)
-        play_btn = ttk.Button(row_frame, text="播放", state='disabled')
-        play_btn.pack(side='left', padx=2)
-        confirm_btn = ttk.Button(row_frame, text="确认", state='disabled')
-        confirm_btn.pack(side='left', padx=2)
-        status_label = ttk.Label(row_frame, text="生成中...", foreground='blue')
-        status_label.pack(side='left', padx=5)
-        row_frame.pending_info = {
-            'original_index': original_index,
-            'final_text': final_text,
-            'problem_desc': problem_desc,
-            'status_label': status_label,
-            'play_btn': play_btn,
-            'confirm_btn': confirm_btn,
-            'label_desc': label_desc
-        }
-        self.retake_queue.append({
-            'original_index': original_index,
-            'original_text': self.segments[original_index-1]['text'],
-            'problem_desc': problem_desc,
-            'new_text': final_text,
-            'row_frame': row_frame
-        })
-
     def confirm_segment(self, idx):
         for seg in self.segments:
             if seg.get('index') == idx:
@@ -7765,97 +7981,24 @@ class AudioPanel(ttk.Frame):
                 self.log(f"片段 {idx} 已确认")
                 break
         self.check_all_confirmed()
-
-    def confirm_retake(self, item, audio_path, duration, new_text, retake_idx, row_frame):
-        self.log(f"确认重录片段（原序号{item['original_index']}）: 新音频 {audio_path}")
-        for seg in self.segments:
-            if seg.get('index') == item['original_index']:
-                seg['audio_file'] = audio_path
-                seg['duration'] = duration
-                seg['text'] = new_text
-                seg['confirmed'] = True
-                seg['status_var'].set("已确认")
-                seg['play_btn'].config(state='normal', command=lambda p=audio_path: self.play_audio(p))
-                seg['retake_btn'].config(state='disabled')
-                seg['confirm_btn'].config(state='disabled')
-                preview = new_text[:60] + '...' if len(new_text) > 60 else new_text
-                seg['preview_label'].config(text=preview)
-                break
-        row_frame.destroy()
-        self.check_all_confirmed()
-
     def check_all_confirmed(self):
-        all_original_confirmed = all(seg.get('confirmed', False) for seg in self.segments)
-        if all_original_confirmed and not self.retake_queue:
+        if all(seg.get('confirmed', False) for seg in self.segments):
             self.log("所有片段已确认，开始合成最终音频...")
             threading.Thread(target=self.combine_audio, daemon=True).start()
-
     def combine_audio(self):
         confirmed = [seg for seg in self.segments if seg.get('confirmed')]
         confirmed.sort(key=lambda x: x.get('index', 0))
         if not confirmed:
             self.log("没有已确认的片段，无法合成")
             return
-        concat_file = os.path.join(self.work_dir, "concat.txt")
-        with open(concat_file, 'w', encoding='utf-8') as f:
-            for seg in confirmed:
-                audio_file = seg['audio_file']
-                if not audio_file:
-                    self.log(f"警告：片段 {seg.get('index')} 没有音频文件，跳过")
-                    continue
-                audio_file = audio_file.replace('\\', '/')
-                if not os.path.exists(audio_file):
-                    self.log(f"警告：音频文件不存在 {audio_file}，跳过")
-                    continue
-                rel_path = os.path.relpath(audio_file, self.work_dir).replace('\\', '/')
-                print(f"[DEBUG] 写入 concat 相对路径: {rel_path}")
-                f.write(f"file '{rel_path}'\n")
-        final_audio = os.path.join(self.work_dir, "final_audio.mp3")
-        cmd = [str(FFMPEG), '-y', '-f', 'concat', '-safe', '0', '-i', 'concat.txt', '-ar', '16000', '-c:a', 'libmp3lame', '-b:a', '128k', 'final_audio.mp3']
-        self.log("正在合成最终音频（ffmpeg），请稍候...")
-        try:
-            process = subprocess.Popen(
-                cmd,
-                cwd=self.work_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                encoding='utf-8',
-                errors='replace',
-                bufsize=1
-            )
-            for line in process.stdout:
-                self.log(line.rstrip())
-            process.wait()
-            if process.returncode == 0:
-                self.log(f"最终音频已保存: {final_audio}")
-                self.generate_timeline(confirmed, final_audio)
-                self.after(0, lambda: self.final_audio_status.set("已生成"))
-                self.after(0, lambda: self.final_play_btn.config(state='normal'))
-            else:
-                self.log(f"ffmpeg 合成失败，返回码: {process.returncode}")
-        except Exception as e:
-            self.log(f"合成异常: {e}")
+        self.final_combiner.combine(confirmed, self._on_combine_done)
 
-    def generate_timeline(self, confirmed_segments, final_audio_path):
-        timeline = []
-        total_ms = 0
-        for seg in confirmed_segments:
-            duration_ms = int(seg['duration'] * 1000)
-            timeline.append({
-                "index": seg['index'],
-                "text": seg['text'],
-                "start_ms": total_ms,
-                "end_ms": total_ms + duration_ms,
-                "duration_ms": duration_ms,
-                "file": os.path.basename(seg['audio_file'])
-            })
-            total_ms += duration_ms
-        timeline_path = os.path.join(self.work_dir, "audio_timeline.json")
-        with open(timeline_path, 'w', encoding='utf-8') as f:
-            json.dump(timeline, f, ensure_ascii=False, indent=2)
-        self.log(f"时间轴已保存: {timeline_path}")
-        self.log("全部完成！")
-
+    def _on_combine_done(self, success, final_audio_path):
+        if success:
+            self.final_audio_status.set("已生成")
+            self.final_play_btn.config(state='normal')
+        else:
+            self.log("最终音频合成失败")
     def stop_generation(self):
         if self.gen_controller:
             self.gen_controller.cancel_all()
@@ -8764,11 +8907,9 @@ class ShotEditorWindow:
 ```py
 # gui/simple_mode.py
 import tkinter as tk
-from tkinter import scrolledtext, messagebox
+from tkinter import ttk
 import os
 import json
-import threading
-import re
 from datetime import datetime
 from utils import config_manager
 
@@ -8776,290 +8917,129 @@ class SimpleMode:
     def __init__(self, parent_frame, app):
         self.app = app
         self.frame = tk.Frame(parent_frame)
-        self.create_ui()
-        self.frame.pack_forget()  # 初始隐藏
-
-    def create_ui(self):
-        frame = self.frame
-
-        # 你的故事
-        tk.Label(frame, text="你的故事（请用讲故事的口吻写下来，越详细越好）").pack(anchor='w', padx=5, pady=(10,0))
-        story_frame = tk.Frame(frame)
-        story_frame.pack(fill='x', padx=5, pady=2)
-        self.story_text = scrolledtext.ScrolledText(story_frame, wrap='word', height=8)
-        self.story_text.pack(side='left', fill='both', expand=True)
-        self.story_word_count = tk.Label(story_frame, text="0字", anchor='e', width=10)
-        self.story_word_count.pack(side='right', padx=5)
-        self.story_text.bind('<KeyRelease>', lambda e: self.update_word_count(self.story_text, self.story_word_count))
-
-        # 风格人设卡（可选）
-        tk.Label(frame, text="风格人设卡（可选）").pack(anchor='w', padx=5, pady=(10,0))
-        style_frame = tk.Frame(frame)
-        style_frame.pack(fill='x', padx=5, pady=2)
-        self.style_text = scrolledtext.ScrolledText(style_frame, wrap='word', height=3)
-        self.style_text.pack(side='left', fill='both', expand=True)
-        self.style_word_count = tk.Label(style_frame, text="0字", anchor='e', width=10)
-        self.style_word_count.pack(side='right', padx=5)
-        self.style_text.bind('<KeyRelease>', lambda e: self.update_word_count(self.style_text, self.style_word_count))
-
-        # 人设卡管理按钮
-        btn_frame = tk.Frame(frame)
-        btn_frame.pack(fill='x', padx=5, pady=2)
-        tk.Button(btn_frame, text="▼预设", command=self.open_style_preset).pack(side='left', padx=2)
-        tk.Button(btn_frame, text="✨一键生成", command=self.generate_style).pack(side='left', padx=2)
-        tk.Button(btn_frame, text="💾保存", command=self.save_style_preset).pack(side='left', padx=2)
-
-        # 一致性开关
-        self.consistency_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(frame, text="严格保持人物/场景一致性（开启后，AI将自动从故事中提取设定，确保视频一致性）",
-                       variable=self.consistency_var).pack(anchor='w', padx=5, pady=5)
+        self.work_dir = None   # 项目工作目录
         
-        # 生成口播稿按钮
-        self.generate_btn = tk.Button(frame, text="生成口播稿", command=self.generate_script, width=15)
-        self.generate_btn.pack(pady=5)
+        # 创建数据模型和控制器
+        from gui.simple.data import SimpleModeData
+        from gui.simple.controller import SimpleModeController
+        
+        self.data = SimpleModeData()
+        self.controller = SimpleModeController(self, self.data, self.app)
+        
+        self.create_ui()
+        self.frame.pack(fill='both', expand=True)
 
-        # 选择或编辑提示词按钮（初始禁用）
-        self.edit_btn = tk.Button(frame, text="选择或编辑提示词", command=self.app.open_shot_editor, width=16, state='disabled')
-        self.edit_btn.pack(pady=5)
-        self.run_workflow_btn = tk.Button(frame, text="运行工作流", command=self.run_workflow_manually, width=14, state='disabled')
-        self.run_workflow_btn.pack(pady=5)
+    def load_project(self, folder):
+        """从历史项目目录加载数据"""
+        self.work_dir = folder
+        # 加载故事文本
+        story_path = os.path.join(folder, "story.txt")
+        if os.path.exists(story_path):
+            with open(story_path, 'r', encoding='utf-8') as f:
+                story = f.read()
+            self.story_tab.text_widget.delete('1.0', 'end')
+            self.story_tab.text_widget.insert('1.0', story)
+            self.story_tab.update_word_count()
+            self.data.story_text = story
 
-        # 口播稿预览
-        tk.Label(frame, text="口播稿预览（可直接编辑）").pack(anchor='w', padx=5, pady=(10,0))
-        preview_frame = tk.Frame(frame)
-        preview_frame.pack(fill='both', expand=True, padx=5, pady=2)
-        self.preview_text = scrolledtext.ScrolledText(preview_frame, wrap='word', height=10)
-        self.preview_text.pack(side='left', fill='both', expand=True)
-        self.preview_word_count = tk.Label(preview_frame, text="0字", anchor='e', width=10)
-        self.preview_word_count.pack(side='right', padx=5)
-        self.preview_text.bind('<KeyRelease>', lambda e: self.update_preview_stats())
-        # 一致性设定显示（只读）
-        tk.Label(frame, text="人物/场景设定（AI提取，不可编辑）").pack(anchor='w', padx=5, pady=(10,0))
-        consistency_frame = tk.Frame(frame)
-        consistency_frame.pack(fill='x', padx=5, pady=2)
-        self.consistency_text = scrolledtext.ScrolledText(consistency_frame, wrap='word', height=5)
-        self.consistency_text.pack(side='left', fill='both', expand=True)
-        self.consistency_text.config(state='disabled')  # 设为只读
+        # 加载元数据
+        metadata_path = os.path.join(folder, "metadata.json")
+        if os.path.exists(metadata_path):
+            with open(metadata_path, 'r', encoding='utf-8') as f:
+                self.data.metadata = json.load(f)
 
-        # 预估时长
-        self.duration_label = tk.Label(frame, text="预估时长：--分--秒（按4.0字/秒预估，仅供参考）", anchor='w')
-        self.duration_label.pack(anchor='w', padx=5, pady=2)
+        # 加载 shots.txt（如果有）
+        shots_path = os.path.join(folder, "shots.txt")
+        if os.path.exists(shots_path):
+            with open(shots_path, 'r', encoding='utf-8') as f:
+                shots_content = f.read()
+            # 可以解析并显示到剧本标签页，暂时先直接显示文本
+            self.script_tab.display_raw_text(shots_content)
 
-        # 确认并生成视频按钮
-        self.confirm_btn = tk.Button(frame, text="✅ 确认并生成视频", command=self.confirm_and_generate, width=20)
-        self.confirm_btn.pack(pady=10)
+        # 加载资产库（如果有）
+        assets_path = os.path.join(folder, "assets.json")
+        if os.path.exists(assets_path):
+            with open(assets_path, 'r', encoding='utf-8') as f:
+                assets = json.load(f)
+                self.data.assets = assets
+                self.assets_tab.update_assets(assets)
 
-        # 倒计时标签（初始隐藏）
-        self.countdown_label = tk.Label(frame, text="", font=('Arial', 16, 'bold'), fg='red')
+        # 启用相应按钮（根据已存在的数据决定）
+        # 这里简单启用所有按钮，但实际应根据数据完整性判断
+        self.set_button_state('normal', 'normal', 'normal', 'disabled')
+        self.app.log(f"已加载历史项目: {folder}")
+    
+    def create_ui(self):
+        # 顶部：标题输入和高级向导
+        top_frame = tk.Frame(self.frame)
+        top_frame.pack(fill='x', padx=5, pady=5)
+        
+        tk.Label(top_frame, text="故事标题：").pack(side='left')
+        self.title_entry = tk.Entry(top_frame, width=30)
+        self.title_entry.pack(side='left', padx=5)
+        
+        self.wizard_btn = tk.Button(top_frame, text="高级向导", command=self.controller.open_wizard)
+        self.wizard_btn.pack(side='left', padx=5)
+        
+        # 标签页
+        self.notebook = ttk.Notebook(self.frame)
+        self.notebook.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # 故事标签页
+        from gui.simple.story_tab import StoryTab
+        self.story_tab = StoryTab(self.notebook, self.controller)
+        self.notebook.add(self.story_tab.frame, text="故事")
+        
+        # 剧本标签页
+        from gui.simple.script_tab import ScriptTab
+        self.script_tab = ScriptTab(self.notebook, self.controller)
+        self.notebook.add(self.script_tab.frame, text="剧本")
+        
+        # 资产库标签页
+        from gui.simple.assets_tab import AssetsTab
+        self.assets_tab = AssetsTab(self.notebook, self.controller)
+        self.notebook.add(self.assets_tab.frame, text="资产库")
+        
+        # 提示词标签页
+        from gui.simple.prompts_tab import PromptsTab
+        self.prompts_tab = PromptsTab(self.notebook, self.controller)
+        self.notebook.add(self.prompts_tab.frame, text="提示词")
+        
+        # 底部按钮栏
+        btn_frame = tk.Frame(self.frame)
+        btn_frame.pack(fill='x', padx=5, pady=5)
+        
+        self.gen_script_btn = tk.Button(btn_frame, text="1. 生成剧本", command=self.controller.generate_script, width=15)
+        self.gen_script_btn.pack(side='left', padx=2)
+        
+        self.extract_assets_btn = tk.Button(btn_frame, text="2. 提取资产", command=self.controller.extract_assets, width=15, state='disabled')
+        self.extract_assets_btn.pack(side='left', padx=2)
+        
+        self.gen_prompts_btn = tk.Button(btn_frame, text="3. 生成提示词", command=self.controller.generate_prompts, width=15, state='disabled')
+        self.gen_prompts_btn.pack(side='left', padx=2)
+        
+        self.confirm_btn = tk.Button(btn_frame, text="✅ 确认并生成视频", command=self.controller.confirm_and_generate, width=20, state='disabled')
+        self.confirm_btn.pack(side='left', padx=2)
+        
+        # 倒计时标签（原有，用于显示倒计时）
+        self.countdown_label = tk.Label(self.frame, text="", font=('Arial', 16, 'bold'), fg='red')
         self.countdown_label.pack(pady=(5,0))
         self.countdown_label.pack_forget()
-
-    def run_workflow_manually(self):
-        """手动运行工作流，停止倒计时并调用 app.run_workflow"""
-        if self.app.timer:
-            self.app.timer.stop()
-        self.hide_countdown()
-        self.app.run_workflow()
-
-    def update_word_count(self, text_widget, label_widget):
-        content = text_widget.get('1.0', 'end-1c')
-        count = len(content)
-        label_widget.config(text=f"{count:,}字")
-
-    def update_preview_stats(self):
-        content = self.preview_text.get('1.0', 'end-1c')
-        count = len(content)
-        self.preview_word_count.config(text=f"{count:,}字")
-        seconds = count / 4.0
-        minutes = int(seconds // 60)
-        secs = int(seconds % 60)
-        self.duration_label.config(text=f"预估时长：{minutes}分{secs}秒（按4.0字/秒预估，仅供参考）")
-
-    def generate_style(self):
-        story = self.story_text.get('1.0', 'end-1c').strip()
-        if not story:
-            messagebox.showwarning("提示", "请先输入故事内容")
-            return
-        try:
-            from utils.style_generator import generate_style_from_story
-            style = generate_style_from_story(story)
-            self.style_text.delete('1.0', 'end')
-            self.style_text.insert('1.0', style)
-            self.update_word_count(self.style_text, self.style_word_count)
-        except Exception as e:
-            messagebox.showerror("错误", f"生成风格失败：{e}")
-
-    def save_style_preset(self):
-        style = self.style_text.get('1.0', 'end-1c').strip()
-        if not style:
-            messagebox.showwarning("提示", "风格人设卡为空，无需保存")
-            return
-        from tkinter import simpledialog
-        name = simpledialog.askstring("保存预设", "请输入预设名称：", parent=self.app.root)
-        if not name:
-            return
-        try:
-            from utils.config_manager import save_style_preset as save_preset
-            save_preset(name, style)
-            messagebox.showinfo("成功", f"预设“{name}”已保存")
-        except Exception as e:
-            messagebox.showerror("错误", f"保存失败：{e}")
-
-    def open_style_preset(self):
-        # 待实现
-        messagebox.showinfo("提示", "此功能待实现")
-
-    def generate_script(self):
-        story = self.story_text.get('1.0', 'end-1c').strip()
-        if not story:
-            messagebox.showwarning("提示", "请先输入故事内容")
-            return
-        style = self.style_text.get('1.0', 'end-1c').strip()
-
-        self.generate_btn.config(state='disabled', text="生成中...")
-        self.app.log("正在生成口播稿，请稍候...")
-
-        def task():
-            try:
-                from utils.story_to_script import generate_script as gen_script
-                script = gen_script(story, style)
-                self.app.root.after(0, self._on_script_generated, script)
-            except Exception as e:
-                self.app.root.after(0, self._on_script_error, str(e))
-
-        threading.Thread(target=task, daemon=True).start()
-
-    def _on_script_generated(self, script):
-        self.preview_text.delete('1.0', 'end')
-        self.preview_text.insert('1.0', script)
-        self.update_preview_stats()
-        self.generate_btn.config(state='normal', text="生成口播稿")
-        self.app.log("口播稿生成完成")
-
-    def _on_script_error(self, error_msg):
-        messagebox.showerror("错误", f"生成口播稿失败：{error_msg}")
-        self.generate_btn.config(state='normal', text="生成口播稿")
-        self.app.log(f"口播稿生成失败：{error_msg}")
-
-    def confirm_and_generate(self):
-        """确认并生成视频（异步执行，避免假死）"""
-        script = self.preview_text.get('1.0', 'end-1c').strip()
-        if not script:
-            messagebox.showwarning("提示", "口播稿为空，无法生成视频")
-            return
-
-        # 禁用按钮，防止重复点击
-        self.confirm_btn.config(state='disabled', text="处理中...")
-        self.app.log("正在准备生成视频，请稍候...")
-
-        def task():
-            try:
-                self._do_confirm_generate(script)
-            except Exception as e:
-                self.app.root.after(0, lambda: messagebox.showerror("错误", f"生成视频过程中出错：{e}"))
-            finally:
-                self.app.root.after(0, lambda: self.confirm_btn.config(state='normal', text="✅ 确认并生成视频"))
-
-        threading.Thread(target=task, daemon=True).start()
-
-    def _do_confirm_generate(self, script):
-        """实际执行生成视频的工作（在子线程中运行）"""
-        title = self.app.toolbar.title_entry.get().strip()
-        if not title:
-            title = f"一键成片_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        folder_name = f"{title}_{timestamp}"
-        base_dir = config_manager.OUTPUT_ROOT_DIR
-        work_dir = os.path.join(base_dir, folder_name)
-        os.makedirs(work_dir, exist_ok=True)
-
-        # 通过 after 更新 UI 上的工作目录显示
-        self.app.root.after(0, lambda: self._update_work_dir_display(work_dir, title))
-
-        script_filename = f"口播稿_{timestamp}.txt"
-        script_path = os.path.join(work_dir, script_filename)
-        with open(script_path, 'w', encoding='utf-8') as f:
-            f.write(script)
-        self.app.log(f"口播稿已保存至: {script_path}")
-
-        # 如果开启一致性，提取设定并写入 header.txt
-        if self.consistency_var.get():
-            self.app.log("正在提取人物/场景设定（开启一致性），请稍候...")
-            try:
-                from utils.extract_persona_scene import extract_from_story
-                story_text = self.story_text.get('1.0', 'end-1c').strip()
-                extracted = extract_from_story(story_text)
-                self.app.log("人物/场景设定提取完成")
-                header_path = os.path.join(work_dir, "header.txt")
-                with open(header_path, 'w', encoding='utf-8') as f:
-                    f.write(f"project: {title}\n")
-                    style_preset = self.style_text.get('1.0', 'end-1c').strip()
-                    style = style_preset if style_preset else "电影感、写实、自然光影"
-                    f.write(f"style: {style}\n")
-                    f.write(f"seed: 12345\n")
-                    # 写入人物设定
-                    f.write("persona:\n")
-                    import re
-                    persona_match = re.search(r'【人物设定】\s*(.*?)(?=【场景设定】|\Z)', extracted, re.DOTALL)
-                    if persona_match:
-                        persona_part = persona_match.group(1).strip()
-                        f.write(persona_part + "\n")
-                    # 写入场景设定
-                    f.write("scene:\n")
-                    scene_match = re.search(r'【场景设定】\s*(.*?)(?=\Z)', extracted, re.DOTALL)
-                    if scene_match:
-                        scene_part = scene_match.group(1).strip()
-                        f.write(scene_part + "\n")
-                self.app.log("已根据故事生成人物/场景设定并写入 header.txt")
-                # 更新一致性显示区域，直接使用提取的纯文本
-                self.app.root.after(0, lambda: self._update_consistency_display(extracted))
-            except Exception as e:
-                self.app.root.after(0, lambda e=e: messagebox.showerror("错误", f"提取人物/场景设定失败：{e}"))
-                return
-
-        input_filename = f"{title}_{timestamp}.txt"
-        input_file_path = os.path.join(work_dir, input_filename)
-        with open(input_file_path, 'w', encoding='utf-8') as f:
-            f.write("口播稿扩展\n")
-            f.write(script + "\n\n")
-        self.app.log(f"已生成输入文件: {input_file_path}")
-
-        # 设置模式
-        self.app.toolbar.mode_var.set("文生视频")
-        self.app.toolbar.subtitle_mode_var.set("有字幕")
-
-        # 更新状态
-        self.app.root.after(0, lambda: self.app.standard_mode.start_btn.config(state='disabled'))
-        self.app.root.after(0, lambda: self.app.common.set_status("正在执行第一步..."))
-        self.app.root.after(0, lambda: self.app.set_progress(0))
-
-        # 启动流程
-        self.app.step_mgr.mode = "自由模式"  # 使用新解析器
-        self.app.root.after(0, lambda: threading.Thread(target=self.app._run_steps_thread, args=(input_filename,), daemon=True).start())
-
-    def _update_work_dir_display(self, work_dir, title):
-        """在主线程中更新工作目录显示"""
-        self.app.work_dir = work_dir
-        self.app.story_title = title
-        self.app.common.set_dir(f"工作目录: {work_dir}")
-        self.app.log(f"一键成片工作目录: {work_dir}")
-
-    def _update_consistency_display(self, text):
-        """在主线程中更新一致性显示区域"""
-        self.consistency_text.config(state='normal')
-        self.consistency_text.delete('1.0', 'end')
-        self.consistency_text.insert('1.0', text)
-        self.consistency_text.config(state='disabled')
-
-    # ---------- 倒计时相关方法 ----------
+    
+    # 以下方法供控制器调用，用于更新 UI 状态
+    def set_button_state(self, gen_script_state, extract_assets_state, gen_prompts_state, confirm_state):
+        self.gen_script_btn.config(state=gen_script_state)
+        self.extract_assets_btn.config(state=extract_assets_state)
+        self.gen_prompts_btn.config(state=gen_prompts_state)
+        self.confirm_btn.config(state=confirm_state)
+    
     def show_countdown(self, seconds):
         self.countdown_label.config(text=f"⏳ {seconds}秒后自动运行工作流，点击「选择或编辑提示词」可暂停")
-        self.countdown_label.pack(before=self.generate_btn, pady=(5,0))
-
+        self.countdown_label.pack(before=self.gen_script_btn, pady=(5,0))
+    
     def hide_countdown(self):
         self.countdown_label.pack_forget()
-
+    
     def set_paused(self):
         self.countdown_label.config(text="⏸️ 已暂停，请编辑后手动运行工作流", fg='orange')
 ```
@@ -9260,6 +9240,518 @@ class StepManager:
             self.set_progress(progress)
 
         return True
+```
+
+### gui\story_wizard.py
+```py
+# gui/story_wizard.py
+import tkinter as tk
+from tkinter import ttk, messagebox
+import json
+
+class StoryWizard:
+    def __init__(self, parent, app, on_finish):
+        self.parent = parent
+        self.app = app
+        self.on_finish = on_finish  # 回调函数，接收生成的口播稿文本
+        self.win = tk.Toplevel(parent)
+        self.win.title("故事创作向导")
+        self.win.geometry("600x500")
+        self.win.transient(parent)
+        self.win.grab_set()
+        self.win.protocol("WM_DELETE_WINDOW", self.cancel)
+        # 获取屏幕尺寸
+        screen_width = self.win.winfo_screenwidth()
+        screen_height = self.win.winfo_screenheight()
+        # 窗口尺寸
+        win_width = 600
+        win_height = 500
+        # 计算位置
+        x = (screen_width - win_width) // 2
+        y = (screen_height - win_height) // 2
+        self.win.geometry(f"{win_width}x{win_height}+{x}+{y}")
+
+        # 存储答案的字典
+        self.answers = {}
+
+        # 当前页码 (0,1,2)
+        self.current_page = 0
+        self.pages = [self.create_page1, self.create_page2, self.create_page3]
+        self.page_frames = []
+
+        self.create_widgets()
+        self.show_page(0)
+
+    def create_widgets(self):
+        # 顶部标题
+        self.title_label = ttk.Label(self.win, text="第一步：宏观设定", font=('微软雅黑', 12, 'bold'))
+        self.title_label.pack(pady=10)
+
+        # 内容区域
+        self.content_frame = ttk.Frame(self.win)
+        self.content_frame.pack(fill='both', expand=True, padx=10, pady=5)
+
+        # 底部按钮
+        btn_frame = ttk.Frame(self.win)
+        btn_frame.pack(pady=10)
+        self.prev_btn = ttk.Button(btn_frame, text="上一步", command=self.prev_page, state='disabled')
+        self.prev_btn.pack(side='left', padx=5)
+        self.next_btn = ttk.Button(btn_frame, text="下一步", command=self.next_page)
+        self.next_btn.pack(side='left', padx=5)
+        self.cancel_btn = ttk.Button(btn_frame, text="取消", command=self.cancel)
+        self.cancel_btn.pack(side='left', padx=5)
+
+    def create_page1(self, frame):
+        """第一页：宏观设定"""
+        # 1. 形式
+        ttk.Label(frame, text="1. 形式：").pack(anchor='w', pady=(5,0))
+        self.form_var = tk.StringVar()
+        form_frame = ttk.Frame(frame)
+        form_frame.pack(anchor='w', fill='x', pady=2)
+        options = ["真人实拍", "2D动画", "3D动画", "其他"]
+        for opt in options:
+            rb = ttk.Radiobutton(form_frame, text=opt, variable=self.form_var, value=opt)
+            rb.pack(side='left', padx=5)
+        self.form_other_entry = ttk.Entry(form_frame, width=20, state='disabled')
+        self.form_other_entry.pack(side='left', padx=5)
+
+        def on_form_change():
+            if self.form_var.get() == "其他":
+                self.form_other_entry.config(state='normal')
+            else:
+                self.form_other_entry.config(state='disabled')
+        self.form_var.trace('w', lambda *a: on_form_change())
+
+        # 2. 世界观
+        ttk.Label(frame, text="2. 世界观：").pack(anchor='w', pady=(5,0))
+        self.world_var = tk.StringVar()
+        world_frame = ttk.Frame(frame)
+        world_frame.pack(anchor='w', fill='x', pady=2)
+        world_options = ["现实世界", "历史背景", "奇幻架空", "科幻未来", "其他"]
+        for opt in world_options:
+            rb = ttk.Radiobutton(world_frame, text=opt, variable=self.world_var, value=opt)
+            rb.pack(side='left', padx=5)
+        self.world_other_entry = ttk.Entry(world_frame, width=20, state='disabled')
+        self.world_other_entry.pack(side='left', padx=5)
+
+        def on_world_change():
+            if self.world_var.get() == "其他":
+                self.world_other_entry.config(state='normal')
+            else:
+                self.world_other_entry.config(state='disabled')
+        self.world_var.trace('w', lambda *a: on_world_change())
+
+        # 3. 情感基调
+        ttk.Label(frame, text="3. 情感基调：").pack(anchor='w', pady=(5,0))
+        self.emotion_var = tk.StringVar()
+        emotion_frame = ttk.Frame(frame)
+        emotion_frame.pack(anchor='w', fill='x', pady=2)
+        emotion_options = ["温馨治愈", "热血励志", "悬疑烧脑", "幽默喜剧", "伤感悲剧", "其他"]
+        for opt in emotion_options:
+            rb = ttk.Radiobutton(emotion_frame, text=opt, variable=self.emotion_var, value=opt)
+            rb.pack(side='left', padx=5)
+        self.emotion_other_entry = ttk.Entry(emotion_frame, width=20, state='disabled')
+        self.emotion_other_entry.pack(side='left', padx=5)
+
+        def on_emotion_change():
+            if self.emotion_var.get() == "其他":
+                self.emotion_other_entry.config(state='normal')
+            else:
+                self.emotion_other_entry.config(state='disabled')
+        self.emotion_var.trace('w', lambda *a: on_emotion_change())
+
+    def create_page2(self, frame):
+        """第二页：风格与时长（动态）"""
+        # 动态创建内容，但先占位
+        self.page2_frame = frame
+        self.page2_widgets = {}  # 存储动态创建的变量
+        self.refresh_page2()
+
+    def refresh_page2(self):
+        """根据第一轮答案刷新页面2"""
+        # 清除原有内容
+        for widget in self.page2_frame.winfo_children():
+            widget.destroy()
+
+        form = self.form_var.get()
+        if form == "其他":
+            form = self.form_other_entry.get().strip() or "其他"
+        world = self.world_var.get()
+        if world == "其他":
+            world = self.world_other_entry.get().strip() or "其他"
+
+        # 1. 风格细化
+        ttk.Label(self.page2_frame, text="1. 风格细化：").pack(anchor='w', pady=(5,0))
+        style_frame = ttk.Frame(self.page2_frame)
+        style_frame.pack(anchor='w', fill='x', pady=2)
+        self.style_var = tk.StringVar()
+        style_options = []
+        if form == "真人实拍":
+            style_options = ["电影质感", "纪录片风格", "网剧质感", "文艺片"]
+        elif form == "2D动画":
+            style_options = ["宫崎骏", "新海诚", "中国水墨", "迪士尼"]
+        elif form == "3D动画":
+            style_options = ["皮克斯", "写实CG", "赛博朋克"]
+        else:
+            # 其他形式，显示输入框
+            style_options = ["其他"]
+        for opt in style_options:
+            rb = ttk.Radiobutton(style_frame, text=opt, variable=self.style_var, value=opt)
+            rb.pack(side='left', padx=5)
+        if "其他" in style_options or not style_options:
+            self.style_other_entry = ttk.Entry(style_frame, width=20, state='normal')
+            self.style_other_entry.pack(side='left', padx=5)
+            self.style_var.set("其他")
+        else:
+            self.style_other_entry = None
+            # 默认选中第一个
+            if style_options:
+                self.style_var.set(style_options[0])
+
+        # 2. 时代/背景细化
+        ttk.Label(self.page2_frame, text="2. 时代/背景细化：").pack(anchor='w', pady=(5,0))
+        era_frame = ttk.Frame(self.page2_frame)
+        era_frame.pack(anchor='w', fill='x', pady=2)
+        self.era_var = tk.StringVar()
+        era_options = []
+        if world == "历史背景":
+            era_options = ["秦朝", "唐朝", "宋朝", "明朝", "民国"]
+        elif world == "奇幻架空":
+            era_options = ["魔法", "龙", "蒸汽朋克", "神话"]
+        elif world == "科幻未来":
+            era_options = ["赛博朋克", "太空歌剧", "后启示录"]
+        elif world == "现实世界":
+            era_options = ["现代", "近未来", "过去十年"]
+        else:
+            era_options = ["其他"]
+        for opt in era_options:
+            rb = ttk.Radiobutton(era_frame, text=opt, variable=self.era_var, value=opt)
+            rb.pack(side='left', padx=5)
+        if "其他" in era_options or not era_options:
+            self.era_other_entry = ttk.Entry(era_frame, width=20, state='normal')
+            self.era_other_entry.pack(side='left', padx=5)
+            self.era_var.set("其他")
+        else:
+            self.era_other_entry = None
+            if era_options:
+                self.era_var.set(era_options[0])
+
+        # 3. 核心看点
+        ttk.Label(self.page2_frame, text="3. 核心看点：").pack(anchor='w', pady=(5,0))
+        core_frame = ttk.Frame(self.page2_frame)
+        core_frame.pack(anchor='w', fill='x', pady=2)
+        self.core_var = tk.StringVar()
+        core_options = ["一场奇遇", "一段旅程", "一次成长", "一个秘密", "其他"]
+        for opt in core_options:
+            rb = ttk.Radiobutton(core_frame, text=opt, variable=self.core_var, value=opt)
+            rb.pack(side='left', padx=5)
+        self.core_other_entry = ttk.Entry(core_frame, width=20, state='disabled')
+        self.core_other_entry.pack(side='left', padx=5)
+
+        def on_core_change():
+            if self.core_var.get() == "其他":
+                self.core_other_entry.config(state='normal')
+            else:
+                self.core_other_entry.config(state='disabled')
+        self.core_var.trace('w', lambda *a: on_core_change())
+        self.core_var.set(core_options[0])
+
+        # 4. 目标时长
+        ttk.Label(self.page2_frame, text="4. 目标时长（分钟）：").pack(anchor='w', pady=(5,0))
+        self.duration_var = tk.IntVar(value=5)
+        duration_scale = ttk.Scale(self.page2_frame, from_=1, to=10, orient='horizontal',
+                                   variable=self.duration_var, length=300)
+        duration_scale.pack(anchor='w', fill='x', pady=2)
+        self.duration_label = ttk.Label(self.page2_frame, text="5分钟")
+        self.duration_label.pack(anchor='w')
+        def on_duration(*args):
+            self.duration_label.config(text=f"{self.duration_var.get()}分钟")
+        self.duration_var.trace('w', on_duration)
+
+    def create_page3(self, frame):
+        """第三页：细节设定"""
+        # 1. 主角设定
+        ttk.Label(frame, text="1. 主角设定：").pack(anchor='w', pady=(5,0))
+        gender_frame = ttk.Frame(frame)
+        gender_frame.pack(anchor='w', fill='x', pady=2)
+        self.gender_var = tk.StringVar(value="不限")
+        ttk.Radiobutton(gender_frame, text="男", variable=self.gender_var, value="男").pack(side='left')
+        ttk.Radiobutton(gender_frame, text="女", variable=self.gender_var, value="女").pack(side='left')
+        ttk.Radiobutton(gender_frame, text="不限", variable=self.gender_var, value="不限").pack(side='left')
+
+        age_frame = ttk.Frame(frame)
+        age_frame.pack(anchor='w', fill='x', pady=2)
+        self.age_var = tk.StringVar(value="不限")
+        ttk.Radiobutton(age_frame, text="少年", variable=self.age_var, value="少年").pack(side='left')
+        ttk.Radiobutton(age_frame, text="青年", variable=self.age_var, value="青年").pack(side='left')
+        ttk.Radiobutton(age_frame, text="中年", variable=self.age_var, value="中年").pack(side='left')
+        ttk.Radiobutton(age_frame, text="老年", variable=self.age_var, value="老年").pack(side='left')
+        ttk.Radiobutton(age_frame, text="不限", variable=self.age_var, value="不限").pack(side='left')
+
+        ttk.Label(frame, text="性格（可多选）：").pack(anchor='w', pady=(5,0))
+        self.traits_vars = {}
+        traits_frame = ttk.Frame(frame)
+        traits_frame.pack(anchor='w', fill='x', pady=2)
+        traits = ["热血", "冷静", "内向", "幽默", "沉稳"]
+        for t in traits:
+            var = tk.BooleanVar()
+            cb = ttk.Checkbutton(traits_frame, text=t, variable=var)
+            cb.pack(side='left', padx=5)
+            self.traits_vars[t] = var
+        self.trait_other_entry = ttk.Entry(traits_frame, width=20)
+        self.trait_other_entry.pack(side='left', padx=5)
+
+        # 2. 关键情节
+        ttk.Label(frame, text="2. 关键情节（可多选，最多3个）：").pack(anchor='w', pady=(5,0))
+        self.plot_vars = {}
+        plot_frame = ttk.Frame(frame)
+        plot_frame.pack(anchor='w', fill='x', pady=2)
+        plots = ["浪漫邂逅", "逆境成长", "团队合作", "复仇反转", "拯救世界"]
+        for p in plots:
+            var = tk.BooleanVar()
+            cb = ttk.Checkbutton(plot_frame, text=p, variable=var)
+            cb.pack(side='left', padx=5)
+            self.plot_vars[p] = var
+        self.plot_other_entry = ttk.Entry(plot_frame, width=20)
+        self.plot_other_entry.pack(side='left', padx=5)
+
+        # 3. 情绪走向
+        ttk.Label(frame, text="3. 情绪走向：").pack(anchor='w', pady=(5,0))
+        self.tone_var = tk.StringVar()
+        tone_frame = ttk.Frame(frame)
+        tone_frame.pack(anchor='w', fill='x', pady=2)
+        tones = ["先抑后扬", "一路热血", "温馨治愈", "虐心伤感", "幽默搞笑", "其他"]
+        for t in tones:
+            rb = ttk.Radiobutton(tone_frame, text=t, variable=self.tone_var, value=t)
+            rb.pack(side='left', padx=5)
+        self.tone_other_entry = ttk.Entry(tone_frame, width=20, state='disabled')
+        self.tone_other_entry.pack(side='left', padx=5)
+        def on_tone_change():
+            if self.tone_var.get() == "其他":
+                self.tone_other_entry.config(state='normal')
+            else:
+                self.tone_other_entry.config(state='disabled')
+        self.tone_var.trace('w', lambda *a: on_tone_change())
+        self.tone_var.set(tones[0])
+
+        # 4. 特殊要求
+        ttk.Label(frame, text="4. 特殊要求（可多选）：").pack(anchor='w', pady=(5,0))
+        self.special_vars = {}
+        special_frame = ttk.Frame(frame)
+        special_frame.pack(anchor='w', fill='x', pady=2)
+        specials = ["加入动物角色", "加入旁白/诗歌", "加入音乐元素", "加入科幻设定"]
+        for s in specials:
+            var = tk.BooleanVar()
+            cb = ttk.Checkbutton(special_frame, text=s, variable=var)
+            cb.pack(side='left', padx=5)
+            self.special_vars[s] = var
+        self.special_other_entry = ttk.Entry(special_frame, width=20)
+        self.special_other_entry.pack(side='left', padx=5)
+
+    def show_page(self, page):
+        # 销毁当前内容
+        for widget in self.content_frame.winfo_children():
+            widget.destroy()
+        # 创建新页面
+        frame = ttk.Frame(self.content_frame)
+        frame.pack(fill='both', expand=True)
+        self.page_frames.append(frame)
+        self.pages[page](frame)
+        # 更新标题
+        titles = ["第一步：宏观设定", "第二步：风格与时长", "第三步：细节设定"]
+        self.title_label.config(text=titles[page])
+        # 更新按钮状态
+        self.prev_btn.config(state='normal' if page > 0 else 'disabled')
+        if page == len(self.pages)-1:
+            self.next_btn.config(text="完成")
+        else:
+            self.next_btn.config(text="下一步")
+
+    def next_page(self):
+        if self.current_page == 0:
+            # 收集第一页答案
+            form = self.form_var.get()
+            if form == "其他":
+                form = self.form_other_entry.get().strip()
+                if not form:
+                    messagebox.showwarning("提示", "请输入其他形式")
+                    return
+            world = self.world_var.get()
+            if world == "其他":
+                world = self.world_other_entry.get().strip()
+                if not world:
+                    messagebox.showwarning("提示", "请输入其他世界观")
+                    return
+            emotion = self.emotion_var.get()
+            if emotion == "其他":
+                emotion = self.emotion_other_entry.get().strip()
+                if not emotion:
+                    messagebox.showwarning("提示", "请输入其他情感基调")
+                    return
+            self.answers.update({
+                "形式": form,
+                "世界观": world,
+                "情感基调": emotion
+            })
+        elif self.current_page == 1:
+            # 收集第二页答案
+            style = self.style_var.get()
+            if style == "其他" and self.style_other_entry:
+                style = self.style_other_entry.get().strip()
+                if not style:
+                    messagebox.showwarning("提示", "请输入其他风格")
+                    return
+            era = self.era_var.get()
+            if era == "其他" and self.era_other_entry:
+                era = self.era_other_entry.get().strip()
+                if not era:
+                    messagebox.showwarning("提示", "请输入其他时代/背景")
+                    return
+            core = self.core_var.get()
+            if core == "其他":
+                core = self.core_other_entry.get().strip()
+                if not core:
+                    messagebox.showwarning("提示", "请输入其他核心看点")
+                    return
+            duration = self.duration_var.get()
+            self.answers.update({
+                "风格细化": style,
+                "时代背景": era,
+                "核心看点": core,
+                "目标时长": f"{duration}分钟"
+            })
+        elif self.current_page == 2:
+            # 收集第三页答案
+            gender = self.gender_var.get()
+            age = self.age_var.get()
+            traits = [t for t, var in self.traits_vars.items() if var.get()]
+            if self.trait_other_entry.get().strip():
+                traits.append(self.trait_other_entry.get().strip())
+            plots = [p for p, var in self.plot_vars.items() if var.get()]
+            if self.plot_other_entry.get().strip():
+                plots.append(self.plot_other_entry.get().strip())
+            tone = self.tone_var.get()
+            if tone == "其他":
+                tone = self.tone_other_entry.get().strip()
+                if not tone:
+                    messagebox.showwarning("提示", "请输入其他情绪走向")
+                    return
+            specials = [s for s, var in self.special_vars.items() if var.get()]
+            if self.special_other_entry.get().strip():
+                specials.append(self.special_other_entry.get().strip())
+
+            self.answers.update({
+                "主角性别": gender,
+                "主角年龄": age,
+                "主角性格": "、".join(traits) if traits else "无特殊",
+                "关键情节": "、".join(plots) if plots else "无",
+                "情绪走向": tone,
+                "特殊要求": "、".join(specials) if specials else "无"
+            })
+            # 生成人设卡并调用 API
+            self.generate_script()
+            return
+
+        self.current_page += 1
+        self.show_page(self.current_page)
+
+    def prev_page(self):
+        self.current_page -= 1
+        self.show_page(self.current_page)
+
+    def generate_script(self):
+        """将答案拼成人设卡，调用 API 生成口播稿"""
+        # 构建人设卡文本
+        preset = f"""
+    你是一位专业的故事撰稿人。请根据以下要求生成一个完整的故事口播稿，用于视频制作。
+
+    【主题】{self.app.toolbar.title_entry.get() or "未提供主题"}
+
+    【创作要求】
+    - 形式：{self.answers.get("形式")}
+    - 世界观：{self.answers.get("世界观")}
+    - 情感基调：{self.answers.get("情感基调")}
+    - 风格细化：{self.answers.get("风格细化")}
+    - 时代背景：{self.answers.get("时代背景")}
+    - 核心看点：{self.answers.get("核心看点")}
+    - 目标时长：{self.answers.get("目标时长")}
+    - 主角性别：{self.answers.get("主角性别")}
+    - 主角年龄：{self.answers.get("主角年龄")}
+    - 主角性格：{self.answers.get("主角性格")}
+    - 关键情节：{self.answers.get("关键情节")}
+    - 情绪走向：{self.answers.get("情绪走向")}
+    - 特殊要求：{self.answers.get("特殊要求")}
+
+    【输出要求】
+    - 口播稿应直接输出，无额外说明。
+    - 开篇要有引人入胜的引子，结尾要有回味。
+    - 语言生动，适合视频旁白。
+    - 全文约{self.answers.get("目标时长")}的朗读量（约每分钟200字）。
+    """
+
+        # 构造 metadata 字典
+        metadata = {
+            "形式": self.answers.get("形式"),
+            "世界观": self.answers.get("世界观"),
+            "情感基调": self.answers.get("情感基调"),
+            "风格细化": self.answers.get("风格细化"),
+            "时代背景": self.answers.get("时代背景"),
+            "核心看点": self.answers.get("核心看点"),
+            "目标时长": self.answers.get("目标时长"),
+            "主角性别": self.answers.get("主角性别"),
+            "主角年龄": self.answers.get("主角年龄"),
+            "主角性格": self.answers.get("主角性格"),
+            "关键情节": self.answers.get("关键情节"),
+            "情绪走向": self.answers.get("情绪走向"),
+            "特殊要求": self.answers.get("特殊要求")
+        }
+
+        # 添加日志：开始生成
+        self.app.log("高级向导：正在生成故事，请稍候...")
+
+        # 先关闭窗口，避免卡在窗口上
+        self.win.destroy()
+
+        # 在后台线程中调用 API
+        import threading
+        def task():
+            from utils.story_to_script import generate_script
+            try:
+                script = generate_script(preset, "")
+                # 在主线程中执行回调
+                self.app.root.after(0, lambda: self._on_generation_done(script, metadata))
+            except Exception as e:
+                self.app.root.after(0, lambda: self._on_generation_error(e))
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _on_generation_done(self, script, metadata):
+        print("_on_generation_done 被调用")
+        # 将 metadata 格式化为注释（HTML 风格，易读）
+        meta_lines = ["<!-- 元数据开始"]
+        for k, v in metadata.items():
+            if v and v != "无特殊" and v != "无":
+                meta_lines.append(f"{k}：{v}")
+        meta_lines.append("元数据结束 -->")
+        meta_text = "\n".join(meta_lines) + "\n\n"
+        full_script = meta_text + script
+        self.app.log("高级向导：故事生成完成")
+        try:
+            print("准备调用 on_finish")
+            self.on_finish(full_script, metadata)
+            print("on_finish 调用完成")
+        except Exception as e:
+            print(f"调用 on_finish 时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            self.app.log(f"高级向导回调失败: {e}")
+
+    def _on_generation_error(self, e):
+        self.app.log(f"高级向导：生成故事失败 - {e}")
+        messagebox.showerror("错误", f"生成故事失败：{e}")
+
+    def cancel(self):
+        self.win.destroy()
 ```
 
 ### gui\top_toolbar.py
@@ -9589,45 +10081,49 @@ class WorkflowExecutor:
 
 ```
 
-### gui\audio\retake_queue.py
+### gui\audio\retake_manager.py
 ```py
-# gui/audio/retake_queue.py
+# gui/audio/retake_manager.py
+import threading
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox, scrolledtext
+import re
+from core.fish_tts import generate_single
+from utils.audio_utils import call_deepseek, get_audio_duration
 
-class RetakeQueuePanel(ttk.Frame):
-    def __init__(self, parent, generation_controller):
-        super().__init__(parent)
-        self.generation_controller = generation_controller
-        self.items = []          # 存储队列中的行信息
-        self.on_play_requested = None   # 外部回调，用于播放音频
-        self.on_confirm_requested = None # 外部回调，用于确认替换
-        self._init_ui()
+class RetakeManager:
+    def __init__(self, work_dir, ref_audio_filename, ref_text, language, log_callback, play_audio_callback):
+        self.work_dir = work_dir
+        self.ref_audio_filename = ref_audio_filename
+        self.ref_text = ref_text
+        self.language = language
+        self.log = log_callback
+        self.play_audio = play_audio_callback
+        self.retake_queue = []
+        self.next_retake_index = 0
+        self.retake_thread_running = True
+        self.retake_thread = threading.Thread(target=self._process_retake_queue, daemon=True)
+        self.retake_thread.start()
+        self.retake_scrollable = None
+        self.on_segment_updated = None
 
-    def _init_ui(self):
-        # 创建滚动区域
-        self.canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
-        self.scrollable_frame = ttk.Frame(self.canvas)
+    def set_retake_scrollable(self, scrollable_frame):
+        self.retake_scrollable = scrollable_frame
 
-        self.scrollable_frame.bind("<Configure>", self._on_frame_configure)
-        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        self.canvas.configure(yscrollcommand=scrollbar.set)
+    def request_retake(self, idx, seg, text_edit, problem_entry, win):
+        def submit():
+            new_text = text_edit.get('1.0', 'end-1c').strip()
+            problem = problem_entry.get().strip()
+            if new_text == seg['text'] and not problem:
+                messagebox.showwarning("提示", "请修改原文或输入修改意见")
+                return
+            win.destroy()
+            final_text = new_text if new_text != seg['text'] else None
+            self._add_retake_pending_item(seg['index'], final_text, problem, seg['text'])
+        return submit
 
-        self.canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        # 鼠标滚轮绑定
-        def _on_mousewheel(event):
-            self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        self.canvas.bind("<MouseWheel>", _on_mousewheel)
-
-    def _on_frame_configure(self, event):
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-
-    def add_pending(self, original_index, final_text, problem_desc):
-        """添加一个生成中的项"""
-        row_frame = ttk.Frame(self.scrollable_frame)
+    def _add_retake_pending_item(self, original_index, final_text, problem_desc, original_text):
+        row_frame = ttk.Frame(self.retake_scrollable)
         row_frame.pack(fill='x', pady=2)
 
         ttk.Label(row_frame, text=f"原片段{original_index}", width=12).pack(side='left')
@@ -9642,64 +10138,161 @@ class RetakeQueuePanel(ttk.Frame):
         status_label = ttk.Label(row_frame, text="生成中...", foreground='blue')
         status_label.pack(side='left', padx=5)
 
-        info = {
+        pending_info = {
             'original_index': original_index,
             'final_text': final_text,
             'problem_desc': problem_desc,
-            'row_frame': row_frame,
-            'label_desc': label_desc,
+            'original_text': original_text,
+            'status_label': status_label,
             'play_btn': play_btn,
             'confirm_btn': confirm_btn,
-            'status_label': status_label,
-            'audio_path': None,
-            'duration': None,
-            'new_text': None
+            'label_desc': label_desc,
+            'row_frame': row_frame,
+            'error_msg': None
         }
-        self.items.append(info)
+        row_frame.pending_info = pending_info
 
-        # 将生成任务加入控制器队列
-        def callback(idx, success, audio_path, duration):
-            if success:
-                self._on_generation_success(info, audio_path, duration)
+        self.retake_queue.append({
+            'original_index': original_index,
+            'original_text': original_text,
+            'problem_desc': problem_desc,
+            'new_text': final_text,
+            'row_frame': row_frame,
+            'pending_info': pending_info
+        })
+
+    def _process_retake_queue(self):
+        while self.retake_thread_running:
+            if not self.retake_queue:
+                import time
+                time.sleep(0.5)
+                continue
+            item = self.retake_queue.pop(0)
+            self.log(f"开始重录片段 {item['original_index']} ...")
+            if item['new_text'] is not None:
+                final_text = item['new_text']
             else:
-                self._on_generation_failure(info)
+                final_text = self._ai_modify_text(item['original_text'], item['problem_desc'])
+            retake_idx = self.next_retake_index
+            self.next_retake_index += 1
 
-        if self.generation_controller:
-            self.generation_controller.add_task(original_index, final_text, callback)
-        else:
-            # 如果没有控制器，直接失败
-            self._on_generation_failure(info)
+            error_msg = None
+            try:
+                audio_path = generate_single(
+                    text=final_text,
+                    index=retake_idx,
+                    output_dir=self.work_dir,
+                    ref_audio_filename=self.ref_audio_filename,
+                    ref_text=self.ref_text,
+                    language=self.language
+                )
+                if audio_path:
+                    duration = get_audio_duration(audio_path)
+                    self._on_generation_success(item, audio_path, duration, final_text, retake_idx)
+                    continue
+                else:
+                    error_msg = "生成失败，返回空路径"
+            except Exception as e:
+                error_msg = str(e)
+            self._on_generation_failure(item, error_msg)
 
-    def _on_generation_success(self, info, audio_path, duration):
-        info['audio_path'] = audio_path
-        info['duration'] = duration
-        info['new_text'] = info['final_text']  # 最终文本（可能由 AI 修改，此处先使用 final_text）
+    def _ai_modify_text(self, original_text, problem_desc):
+        prompt = f"""
+原始文本（带 Fish S2 标签）：
+{original_text}
+
+用户反馈：{problem_desc}
+
+请根据反馈修改文本，保持原有结构（仍包含 `[标签]` 和 `[inhale]`），只修改语气、语速、情感等相关内容。输出修改后的文本。
+"""
+        try:
+            new_text = call_deepseek(prompt, temperature=0.7)
+            return new_text
+        except Exception as e:
+            self.log(f"AI修改文本失败: {e}")
+            return original_text
+
+    def _on_generation_success(self, item, audio_path, duration, new_text, retake_idx):
+        self.log(f"重录完成（序号{retake_idx}）: {new_text[:30]}... 时长 {duration:.2f}s")
+        row_frame = item['row_frame']
+        info = row_frame.pending_info
+
+        # 清除可能存在的错误标签、重试按钮、提示标签等额外控件
+        for child in row_frame.winfo_children():
+            # 保留原片段标签、描述标签、播放按钮、确认按钮、状态标签
+            if child in (info['play_btn'], info['confirm_btn'], info['status_label'], info['label_desc']):
+                continue
+            if isinstance(child, ttk.Label) and child.cget('text').startswith('原片段'):
+                continue
+            child.destroy()
+
         # 更新 UI
-        preview = info['new_text'][:30] + '...' if len(info['new_text']) > 30 else info['new_text']
+        preview = new_text[:30] + '...' if len(new_text) > 30 else new_text
         info['label_desc'].config(text=preview)
         info['status_label'].config(text="已生成", foreground='green')
-        info['play_btn'].config(state='normal', command=lambda: self._play_audio(audio_path))
-        info['confirm_btn'].config(state='normal', command=lambda: self._confirm_item(info))
+        info['play_btn'].config(state='normal', command=lambda: self.play_audio(audio_path))
+        info['confirm_btn'].config(state='normal', command=lambda: self._confirm_retake(item, audio_path, duration, new_text, retake_idx, row_frame))
+        row_frame.retake_result = {
+            'audio_path': audio_path,
+            'duration': duration,
+            'new_text': new_text,
+            'retake_idx': retake_idx
+        }
 
-    def _on_generation_failure(self, info):
+    def _on_generation_failure(self, item, error_msg):
+        self.log(f"重录失败: {error_msg}")
+        row_frame = item['row_frame']
+        info = row_frame.pending_info
         info['status_label'].config(text="失败", foreground='red')
+        info['error_msg'] = error_msg
 
-    def _play_audio(self, path):
-        if self.on_play_requested:
-            self.on_play_requested(path)
+        # 判断错误类型，给出友好提示
+        lower_msg = error_msg.lower()
+        if "空路径" in lower_msg or "404" in lower_msg or "connection" in lower_msg:
+            error_display = "错误：ComfyUI无法连接"
+            hint_text = "请打开ComfyUI后重试"
+        else:
+            error_display = f"错误: {error_msg[:50]}"
+            hint_text = "请检查日志后重试"
 
-    def _confirm_item(self, info):
-        if self.on_confirm_requested:
-            self.on_confirm_requested(info['original_index'], info['new_text'], info['audio_path'], info['duration'])
-        # 移除该行
-        info['row_frame'].destroy()
-        self.items.remove(info)
+        error_label = ttk.Label(row_frame, text=error_display, foreground='red', font=('微软雅黑', 8))
+        error_label.pack(side='left', padx=5)
+
+        retry_btn = ttk.Button(row_frame, text="重试", command=lambda: self._retry_retake(item))
+        retry_btn.pack(side='left', padx=2)
+
+        hint_label = ttk.Label(row_frame, text=hint_text, foreground='gray', font=('微软雅黑', 8))
+        hint_label.pack(side='left', padx=5)
+
+    def _retry_retake(self, item):
+        row_frame = item['row_frame']
+        info = row_frame.pending_info
+
+        # 清除所有额外控件（错误标签、重试按钮、提示标签）
+        for child in row_frame.winfo_children():
+            if child in (info['play_btn'], info['confirm_btn'], info['status_label'], info['label_desc']):
+                continue
+            if isinstance(child, ttk.Label) and child.cget('text').startswith('原片段'):
+                continue
+            child.destroy()
+
+        # 恢复状态
+        info['status_label'].config(text="生成中...", foreground='blue')
+        # 重新加入队列
+        self.retake_queue.append(item)
+        self.log(f"已重新加入重录队列: 片段 {item['original_index']}")
+
+    def _confirm_retake(self, item, audio_path, duration, new_text, retake_idx, row_frame):
+        self.log(f"确认重录片段（原序号{item['original_index']}）: 新音频 {audio_path}")
+        if self.on_segment_updated:
+            self.on_segment_updated(item['original_index'], audio_path, duration, new_text)
+        row_frame.destroy()
 
     def clear(self):
-        """清空队列"""
-        for info in self.items:
-            info['row_frame'].destroy()
-        self.items.clear()
+        for item in self.retake_queue:
+            if item.get('row_frame'):
+                item['row_frame'].destroy()
+        self.retake_queue.clear()
 ```
 
 ### gui\audio\segment_list.py
@@ -9836,7 +10429,558 @@ class SegmentListPanel(ttk.Frame):
 音频面板模块
 包含段落列表、音频生成、重录队列、播放控制等子组件。
 """
-from .main_panel import AudioPanel
+
+```
+
+### gui\simple\assets_tab.py
+```py
+# gui/simple/assets_tab.py
+import tkinter as tk
+from tkinter import ttk, scrolledtext
+
+class AssetsTab:
+    def __init__(self, parent, controller):
+        self.controller = controller
+        self.frame = tk.Frame(parent)
+        
+        # 使用 PanedWindow 实现可调整大小
+        self.paned = ttk.PanedWindow(self.frame, orient=tk.VERTICAL)
+        self.paned.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # 人物设定区域
+        persona_frame = ttk.LabelFrame(self.paned, text="人物设定")
+        self.paned.add(persona_frame, weight=1)
+        self.persona_text = scrolledtext.ScrolledText(persona_frame, wrap='word', height=5)
+        self.persona_text.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # 场景设定区域
+        scene_frame = ttk.LabelFrame(self.paned, text="场景设定")
+        self.paned.add(scene_frame, weight=1)
+        self.scene_text = scrolledtext.ScrolledText(scene_frame, wrap='word', height=5)
+        self.scene_text.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # 视觉风格区域
+        style_frame = ttk.LabelFrame(self.paned, text="视觉风格")
+        self.paned.add(style_frame, weight=1)
+        self.style_text = scrolledtext.ScrolledText(style_frame, wrap='word', height=5)
+        self.style_text.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # 初始禁用编辑，提取资产后启用（或保持可编辑）
+        self.persona_text.config(state='normal')
+        self.scene_text.config(state='normal')
+        self.style_text.config(state='normal')
+        
+        # 绑定文本变化事件，实时更新数据模型
+        self.persona_text.bind('<<Modified>>', self.on_persona_changed)
+        self.scene_text.bind('<<Modified>>', self.on_scene_changed)
+        self.style_text.bind('<<Modified>>', self.on_style_changed)
+    
+    def on_persona_changed(self, event=None):
+        self.persona_text.edit_modified(False)
+        content = self.persona_text.get('1.0', 'end-1c')
+        self.controller.on_assets_changed('persona', content)
+    
+    def on_scene_changed(self, event=None):
+        self.scene_text.edit_modified(False)
+        content = self.scene_text.get('1.0', 'end-1c')
+        self.controller.on_assets_changed('scene', content)
+    
+    def on_style_changed(self, event=None):
+        self.style_text.edit_modified(False)
+        content = self.style_text.get('1.0', 'end-1c')
+        self.controller.on_assets_changed('style', content)
+    
+    def update_assets(self, assets):
+        """由控制器调用，更新资产显示"""
+        self.persona_text.delete('1.0', 'end')
+        self.persona_text.insert('1.0', assets.get('persona', ''))
+        self.scene_text.delete('1.0', 'end')
+        self.scene_text.insert('1.0', assets.get('scene', ''))
+        self.style_text.delete('1.0', 'end')
+        self.style_text.insert('1.0', assets.get('style', ''))
+```
+
+### gui\simple\controller.py
+```py
+# gui/simple/controller.py
+import threading
+import os
+import re
+import tkinter as tk
+from tkinter import messagebox
+import json
+from datetime import datetime
+from utils import config_manager
+
+class SimpleModeController:
+    def __init__(self, ui, data, app):
+        self.ui = ui
+        self.data = data
+        self.app = app
+
+    def open_wizard(self):
+        from gui.story_wizard import StoryWizard
+        def on_finish(script, metadata):
+            # 创建项目目录
+            title = self.ui.title_entry.get().strip() or "未命名故事"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            folder_name = f"{title}_{timestamp}"
+            base_dir = config_manager.OUTPUT_ROOT_DIR
+            work_dir = os.path.join(base_dir, folder_name)
+            os.makedirs(work_dir, exist_ok=True)
+            self.ui.work_dir = work_dir
+
+            # 保存故事文本
+            story_path = os.path.join(work_dir, "story.txt")
+            with open(story_path, 'w', encoding='utf-8') as f:
+                f.write(script)
+
+            # 保存元数据
+            metadata_path = os.path.join(work_dir, "metadata.json")
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+            # 将故事文本放入故事标签页
+            self.ui.story_tab.text_widget.delete('1.0', 'end')
+            self.ui.story_tab.text_widget.insert('1.0', script)
+            self.ui.story_tab.update_word_count()
+            self.data.story_text = script
+            self.data.metadata = metadata
+            self.app.log(f"项目已保存至: {work_dir}")
+        StoryWizard(self.app.root, self.app, on_finish)
+
+    def on_story_changed(self, content):
+        self.data.story_text = content
+
+    def on_style_changed(self, content):
+        self.data.style_preset = content
+
+    def on_assets_changed(self, key, value):
+        self.data.assets[key] = value
+
+    def generate_script(self):
+        """步骤1：生成剧本"""
+        if not self.data.story_text.strip():
+            messagebox.showwarning("提示", "请先输入故事内容")
+            return
+
+        if not self.ui.work_dir:
+            messagebox.showerror("错误", "请先通过高级向导创建项目，或打开历史项目")
+            return
+
+        self.ui.set_button_state('disabled', 'disabled', 'disabled', 'disabled')
+        self.ui.gen_script_btn.config(text="生成中...")
+        self.app.log("正在生成剧本，请稍候...")
+
+        def task():
+            try:
+                from parsers.free_parser import FreeParser
+                from utils.ai_utils import call_deepseek
+
+                parser = FreeParser(call_deepseek, story_title=self.app.toolbar.title_entry.get(), mode="自由模式")
+                result = parser.parse(self.data.story_text, metadata=self.data.metadata)
+                scenes = result.get("scenes", [])
+                self.data.script_data = scenes
+
+                # 保存 shots.txt
+                self._write_shots_to_file(self.ui.work_dir, scenes)
+
+                # 更新 UI
+                self.app.root.after(0, self._on_script_generated, scenes)
+            except Exception as e:
+                self.app.root.after(0, lambda: messagebox.showerror("错误", f"生成剧本失败：{e}"))
+                self.app.root.after(0, self._reset_buttons)
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _write_shots_to_file(self, work_dir, scenes):
+        shots_path = os.path.join(work_dir, "shots.txt")
+        with open(shots_path, 'w', encoding='utf-8') as f:
+            for scene in scenes:
+                for idx, shot in enumerate(scene['shots'], start=1):
+                    shot_id = f"{scene['id']}-{idx}"
+                    # 镜头标题：优先使用 shot 中的 title，否则使用场次标题
+                    title = shot.get('title', scene['title'])
+                    f.write(f"【镜头{shot_id}：{title}】\n")
+                    # 严格按顺序输出
+                    f.write(f"- 场景：{shot.get('scene', '')}\n")
+                    f.write(f"- 角色：{', '.join(shot.get('roles', []))}\n")
+                    f.write(f"- 动作：{shot.get('action', '')}\n")
+                    f.write(f"- 对白：{shot.get('dialogue', '')}\n")
+                    f.write(f"- 视觉描述：{shot.get('visual', '')}\n")
+                    f.write(f"- 时长：{shot['duration']:.1f}秒\n")
+                    f.write(f"- 情绪基调：{shot['emotion']}\n")
+                    f.write(f"- 地域：{shot['region']}\n")
+                    f.write("===========================\n")
+        self.app.log(f"剧本已保存至 {shots_path}")
+
+    def _on_script_generated(self, scenes):
+        """剧本生成完成后的UI更新"""
+        # 将 scenes 显示到剧本标签页（简单转为文本）
+        text = self._format_scenes_to_text(scenes)
+        self.ui.script_tab.display_scenes(scenes)
+        # 启用下一步按钮
+        self.ui.set_button_state('normal', 'normal', 'disabled', 'disabled')
+        self.ui.gen_script_btn.config(text="1. 生成剧本")
+        self.app.log("剧本生成完成")
+        # 自动切换到剧本标签页
+        self.ui.notebook.select(self.ui.script_tab.frame)
+
+    def _format_scenes_to_text(self, scenes):
+        """将 scenes 数据格式化为可读文本"""
+        lines = []
+        for scene in scenes:
+            lines.append(f"【场次{scene['id']}：{scene['title']}】")
+            for idx, shot in enumerate(scene['shots'], start=1):
+                lines.append(f"  镜头{idx}")
+                lines.append(f"    - 场景：{shot.get('scene', '')}")
+                lines.append(f"    - 角色：{', '.join(shot.get('roles', []))}")
+                lines.append(f"    - 动作：{shot.get('action', '')}")
+                lines.append(f"    - 对白：{shot.get('dialogue', '')}")
+                lines.append(f"    - 视觉描述：{shot.get('visual', '')}")
+                lines.append(f"    - 时长：{shot.get('duration', 10)}秒")
+                lines.append(f"    - 情绪：{shot.get('emotion', '')}")
+                lines.append(f"    - 地域：{shot.get('region', '')}")
+                lines.append("")
+            lines.append("")
+        return "\n".join(lines)
+
+    def extract_assets(self):
+        """步骤2：提取资产库（基于剧本）"""
+        if not self.data.script_data:
+            messagebox.showwarning("提示", "请先生成剧本")
+            return
+
+        self.ui.set_button_state('disabled', 'disabled', 'disabled', 'disabled')
+        self.ui.extract_assets_btn.config(text="提取中...")
+        self.app.log("正在提取资产库（人物、场景、风格），请稍候...")
+
+        def task():
+            try:
+                # 从剧本中提取资产
+                assets = self._extract_assets_from_script(self.data.script_data)
+                self.data.assets = assets
+                self.app.root.after(0, self._on_assets_extracted)
+            except Exception as e:
+                self.app.root.after(0, lambda: messagebox.showerror("错误", f"提取资产失败：{e}"))
+                self.app.root.after(0, self._reset_buttons)
+        threading.Thread(target=task, daemon=True).start()
+
+    def _extract_assets_from_script(self, script_data):
+        """从剧本数据中提取人物、场景、风格"""
+        persona = set()
+        scene_desc = set()
+        # 遍历所有镜头，收集角色和场景
+        for scene in script_data['scenes']:
+            for shot in scene['shots']:
+                # 角色
+                for role in shot.get('roles', []):
+                    if role.strip():
+                        persona.add(role)
+                # 场景描述（取第一个镜头的场景作为参考，可聚合）
+                if shot.get('scene'):
+                    scene_desc.add(shot['scene'])
+        # 格式化
+        persona_text = "\n".join([f"- {r}" for r in persona]) if persona else "无"
+        scene_text = "\n".join([f"- {s}" for s in scene_desc]) if scene_desc else "无"
+        style = self.data.style_preset or "电影感、写实、自然光影"
+        return {
+            'persona': persona_text,
+            'scene': scene_text,
+            'style': style
+        }
+
+    def _on_assets_extracted(self):
+        """资产提取完成后的UI更新"""
+        self.ui.assets_tab.update_assets(self.data.assets)
+        self.ui.set_button_state('normal', 'normal', 'normal', 'disabled')
+        self.ui.extract_assets_btn.config(text="2. 提取资产")
+        self.app.log("资产提取完成")
+        self.ui.notebook.select(self.ui.assets_tab.frame)
+
+    def generate_prompts(self):
+        """步骤3：生成提示词"""
+        # 待实现：调用 auto_split_deepseek 生成提示词
+        messagebox.showinfo("提示", "此功能待实现")
+        # 暂时启用确认按钮
+        # self.ui.set_button_state('normal', 'normal', 'normal', 'normal')
+
+    def confirm_and_generate(self):
+        """步骤4：确认并生成视频"""
+        # 待实现：触发原有视频生成流程
+        messagebox.showinfo("提示", "此功能待实现")
+
+    def _reset_buttons(self):
+        """重置按钮状态"""
+        self.ui.set_button_state('normal', 'disabled', 'disabled', 'disabled')
+        self.ui.gen_script_btn.config(text="1. 生成剧本")
+        self.ui.extract_assets_btn.config(text="2. 提取资产")
+        self.ui.gen_prompts_btn.config(text="3. 生成提示词")
+        self.ui.confirm_btn.config(text="✅ 确认并生成视频")
+
+    def open_style_preset(self):
+        from gui.preset_manager import PresetManagerWindow
+        current_mode = self.app.toolbar.text_type_var.get()
+        win = PresetManagerWindow(self.app.root, current_mode)
+        self.app.root.wait_window(win.win)
+        if hasattr(win, 'result') and win.result:
+            self.app._update_preset_label()
+
+    def generate_style(self, story, style_text_widget):
+        if not story:
+            messagebox.showwarning("提示", "请先输入故事内容")
+            return
+        try:
+            from utils.style_generator import generate_style_from_story
+            style = generate_style_from_story(story)
+            style_text_widget.delete('1.0', 'end')
+            style_text_widget.insert('1.0', style)
+            # 触发字数更新（需要 style_text_widget 有 update_word_count 方法）
+            if hasattr(style_text_widget, 'update_word_count'):
+                style_text_widget.update_word_count()
+        except Exception as e:
+            messagebox.showerror("错误", f"生成风格失败：{e}")
+
+    def save_style_preset(self, style):
+        if not style:
+            messagebox.showwarning("提示", "风格人设卡为空，无需保存")
+            return
+        from tkinter import simpledialog
+        name = simpledialog.askstring("保存预设", "请输入预设名称：", parent=self.app.root)
+        if not name:
+            return
+        try:
+            from utils.config_manager import save_style_preset as save_preset
+            save_preset(name, style)
+            messagebox.showinfo("成功", f"预设“{name}”已保存")
+        except Exception as e:
+            messagebox.showerror("错误", f"保存失败：{e}")
+```
+
+### gui\simple\data.py
+```py
+# gui/simple/data.py
+class SimpleModeData:
+    def __init__(self):
+        self.story_text = ""          # 原始故事文本
+        self.style_preset = ""        # 风格人设卡
+        self.script_data = None       # 剧本数据（结构化）
+        self.assets = {
+            "persona": "",            # 人物设定文本
+            "scene": "",              # 场景设定文本
+            "style": ""               # 视觉风格文本
+        }
+        self.prompts = []             # 提示词列表（每个镜头一个字符串）
+        self.current_tab = 0          # 当前标签页索引
+        self.metadata = {}            # 高级向导生成的元数据
+```
+
+### gui\simple\prompts_tab.py
+```py
+# gui/simple/prompts_tab.py
+import tkinter as tk
+from tkinter import scrolledtext
+
+class PromptsTab:
+    def __init__(self, parent, controller):
+        self.controller = controller
+        self.frame = tk.Frame(parent)
+        
+        self.text_widget = scrolledtext.ScrolledText(self.frame, wrap='word', height=20)
+        self.text_widget.pack(fill='both', expand=True, padx=5, pady=5)
+        self.text_widget.config(state='disabled')
+    
+    def display_prompts(self, prompts_list):
+        """显示提示词列表"""
+        self.text_widget.config(state='normal')
+        self.text_widget.delete('1.0', 'end')
+        for idx, prompt in enumerate(prompts_list, 1):
+            self.text_widget.insert('end', f"【镜头 {idx}】\n")
+            self.text_widget.insert('end', f"{prompt}\n\n")
+        self.text_widget.config(state='disabled')
+```
+
+### gui\simple\script_tab.py
+```py
+# gui/simple/script_tab.py
+import tkinter as tk
+from tkinter import ttk
+from tkinter import scrolledtext
+
+class ScriptTab:
+    def __init__(self, parent, controller):
+        self.controller = controller
+        self.frame = tk.Frame(parent)
+        
+        # 创建 Treeview
+        columns = ('scene', 'shot', 'description', 'action')
+        self.tree = ttk.Treeview(self.frame, columns=columns, show='headings')
+        self.tree.heading('scene', text='场次')
+        self.tree.heading('shot', text='镜头序号')
+        self.tree.heading('description', text='场景描述')
+        self.tree.heading('action', text='镜头描述')
+
+        self.text_widget = scrolledtext.ScrolledText(self.frame, wrap='word', height=20)
+        self.text_widget.pack(fill='both', expand=True, padx=5, pady=5)
+        self.text_widget.config(state='disabled')
+        
+        # 设置列宽
+        self.tree.column('scene', width=80, anchor='center')
+        self.tree.column('shot', width=80, anchor='center')
+        self.tree.column('description', width=300)
+        self.tree.column('action', width=400)
+        
+        # 滚动条
+        scrollbar = ttk.Scrollbar(self.frame, orient='vertical', command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.tree.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+        
+        # 底部按钮（编辑、新增等）
+        btn_frame = tk.Frame(self.frame)
+        btn_frame.pack(fill='x', pady=5)
+        tk.Button(btn_frame, text="编辑镜头", command=self.edit_shot).pack(side='left', padx=2)
+        tk.Button(btn_frame, text="新增镜头", command=self.add_shot).pack(side='left', padx=2)
+        tk.Button(btn_frame, text="删除镜头", command=self.delete_shot).pack(side='left', padx=2)
+    
+    def update_script_data(self, script_data):
+        """根据剧本数据刷新表格"""
+        # 清空现有数据
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        # 假设 script_data 是列表，每个元素为 (scene, shot, description, action)
+        # 具体格式待定
+        if script_data:
+            for row in script_data:
+                self.tree.insert('', 'end', values=row)
+
+    def display_raw_text(self, text):
+        """显示原始文本（例如直接显示 shots.txt 内容）"""
+        self.text_widget.config(state='normal')
+        self.text_widget.delete('1.0', 'end')
+        self.text_widget.insert('1.0', text)
+        self.text_widget.config(state='disabled')
+
+    def display_scenes(self, scenes):
+        """根据 scenes 数据格式化显示剧本"""
+        text = ""
+        for scene in scenes:
+            text += f"【场次{scene['id']}：{scene['title']}】\n"
+            for idx, shot in enumerate(scene['shots'], start=1):
+                text += f"  镜头{idx}\n"
+                text += f"    - 场景：{shot.get('scene', '')}\n"
+                text += f"    - 角色：{', '.join(shot.get('roles', []))}\n"
+                text += f"    - 动作：{shot.get('action', '')}\n"
+                text += f"    - 对白：{shot.get('dialogue', '')}\n"
+                text += f"    - 视觉描述：{shot.get('visual', '')}\n"
+                text += f"    - 时长：{shot.get('duration', 10)}秒\n"
+                text += f"    - 情绪：{shot.get('emotion', '')}\n"
+                text += f"    - 地域：{shot.get('region', '')}\n"
+                text += "\n"
+            text += "\n"
+        self.display_raw_text(text)  # 复用现有方法
+    
+    def edit_shot(self):
+        selected = self.tree.selection()
+        if selected:
+            # 弹出编辑窗口
+            pass
+    
+    def add_shot(self):
+        pass
+    
+    def delete_shot(self):
+        selected = self.tree.selection()
+        if selected:
+            self.tree.delete(selected)
+```
+
+### gui\simple\story_tab.py
+```py
+# gui/simple/story_tab.py
+import tkinter as tk
+from tkinter import scrolledtext
+
+class StoryTab:
+    def __init__(self, parent, controller):
+        self.controller = controller
+        self.frame = tk.Frame(parent)
+        
+        # 故事文本编辑区
+        tk.Label(self.frame, text="你的故事（请用讲故事的口吻写下来，越详细越好）").pack(anchor='w', padx=5, pady=(10,0))
+        
+        story_frame = tk.Frame(self.frame)
+        story_frame.pack(fill='both', expand=True, padx=5, pady=2)
+        
+        self.text_widget = scrolledtext.ScrolledText(story_frame, wrap='word', height=15)
+        self.text_widget.pack(side='left', fill='both', expand=True)
+        
+        # 字数统计
+        self.word_count_label = tk.Label(story_frame, text="0字", anchor='e', width=10)
+        self.word_count_label.pack(side='right', padx=5)
+        self.text_widget.bind('<KeyRelease>', self.update_word_count)
+        
+        # 风格人设卡
+        tk.Label(self.frame, text="风格人设卡（可选）").pack(anchor='w', padx=5, pady=(10,0))
+        style_frame = tk.Frame(self.frame)
+        style_frame.pack(fill='x', padx=5, pady=2)
+        
+        self.style_text = scrolledtext.ScrolledText(style_frame, wrap='word', height=3)
+        self.style_text.pack(side='left', fill='both', expand=True)
+        
+        self.style_word_count = tk.Label(style_frame, text="0字", anchor='e', width=10)
+        self.style_word_count.pack(side='right', padx=5)
+        self.style_text.bind('<KeyRelease>', self.update_style_word_count)
+        
+        # 人设卡管理按钮
+        btn_frame = tk.Frame(self.frame)
+        btn_frame.pack(fill='x', padx=5, pady=2)
+        tk.Button(btn_frame, text="▼预设", command=self.open_preset).pack(side='left', padx=2)
+        tk.Button(btn_frame, text="✨一键生成", command=self.generate_style).pack(side='left', padx=2)
+        tk.Button(btn_frame, text="💾保存", command=self.save_preset).pack(side='left', padx=2)
+        
+        # 绑定数据同步
+        self.text_widget.bind('<<Modified>>', self.on_story_changed)
+        self.style_text.bind('<<Modified>>', self.on_style_changed)
+    
+    def update_word_count(self, event=None):
+        content = self.text_widget.get('1.0', 'end-1c')
+        count = len(content)
+        self.word_count_label.config(text=f"{count:,}字")
+    
+    def update_style_word_count(self, event=None):
+        content = self.style_text.get('1.0', 'end-1c')
+        count = len(content)
+        self.style_word_count.config(text=f"{count:,}字")
+    
+    def on_story_changed(self, event=None):
+        self.text_widget.edit_modified(False)
+        content = self.text_widget.get('1.0', 'end-1c')
+        self.controller.on_story_changed(content)
+    
+    def on_style_changed(self, event=None):
+        self.style_text.edit_modified(False)
+        content = self.style_text.get('1.0', 'end-1c')
+        self.controller.on_style_changed(content)
+    
+    def open_preset(self):
+        # 调用控制器的方法
+        self.controller.open_style_preset()
+    
+    def generate_style(self):
+        story = self.text_widget.get('1.0', 'end-1c').strip()
+        self.controller.generate_style(story, self.style_text)
+    
+    def save_preset(self):
+        style = self.style_text.get('1.0', 'end-1c').strip()
+        self.controller.save_style_preset(style)
+```
+
+### gui\simple\__init__.py
+```py
+
 ```
 
 ### parsers\ai_response_cleaner.py
@@ -10411,96 +11555,162 @@ class BaseParser(ABC):
 ### parsers\free_parser.py
 ```py
 # parsers/free_parser.py
-"""
-自由解析器：不加载人设卡，完全根据故事内容生成镜头，并自动识别整体风格。
-"""
 import sys
 import os
+import re
+import json
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from .base_batch_parser import BatchParser
+from .base_parser import BaseParser
+from utils import config_manager
 
-# 语速设置：字/秒
-WORDS_PER_SECOND = 4.5
+class FreeParser(BaseParser):
+    def __init__(self, call_deepseek, story_title=None, mode=None):
+        super().__init__(call_deepseek, story_title, mode)
+        self.metadata = None  # 存储高级向导传入的元数据
 
-class FreeParser(BatchParser):
-    def parse(self, raw_text):
-        # 调用AI识别整体风格
-        style = self._identify_style(raw_text)
+    def parse(self, raw_text, metadata=None, work_dir=None):
+        self.metadata = metadata or {}
+        prompt = self._build_script_prompt(raw_text)
+        result = self.call_deepseek(prompt, temperature=0.7, max_tokens=8000)
+        script_data = self._parse_script(result)
+        # 重新编号场次
+        for idx, scene in enumerate(script_data, start=1):
+            scene['id'] = idx
+        return {"scenes": script_data}
 
-        default_global = {
-            "style": style,
-            "seed": 12345
-        }
+    def _build_script_prompt(self, story_text):
+        """构建剧本生成的 prompt"""
+        meta = self.metadata
+        meta_text = ""
+        if meta:
+            meta_text = "【创作元数据】\n"
+            for k, v in meta.items():
+                if v and v != "无特殊" and v != "无":
+                    meta_text += f"- {k}：{v}\n"
+            meta_text += "\n"
 
-        print("正在自由解析文稿，生成视觉描述...")
-        segments_data = self._generate_segments(raw_text)
-        print(f"文稿已分割为 {len(segments_data)} 个逻辑镜头")
-
-        # 根据每个段落的字数重新计算时长
-        for item in segments_data:
-            content = item.get("content", "")
-            raw_duration = max(5, min(20, int(len(content) / WORDS_PER_SECOND)))
-            item["duration"] = raw_duration
-
-        segments = []
-        for i, item in enumerate(segments_data, start=1):
-            segments.append({
-                "id": i,
-                "title": item["title"],
-                "content": item["content"],
-                "shots": item.get("shots", [{
-                    "visual": item.get("visual", ""),
-                    "duration": item.get("duration", 10),
-                    "emotion": item.get("emotion", "")
-                }])
-            })
-
-        output_data = {
-            "project": self.story_title or "自由创作",
-            "global": default_global,
-            "persona": {},
-            "scene": {},
-            "segments": segments
-        }
-        return output_data
-
-    def _identify_style(self, text):
-        """让AI分析文稿的整体视觉风格"""
         prompt = f"""
-请根据以下故事内容，分析并概括它的整体视觉风格。风格描述应简短、精炼，例如“电影感、写实、自然光影”、“水墨动画、留白、意境”、“赛博朋克、霓虹、未来都市”等。直接输出风格描述，不要任何额外内容。
+你是一位专业的影视编剧。请将以下故事改编成一份分场分镜剧本，适合用于视频制作。
 
+{meta_text}
 故事内容：
-{text}
-"""
-        try:
-            style = self.call_deepseek(prompt, temperature=0.3, max_tokens=100)
-            return style.strip()
-        except Exception as e:
-            print(f"风格识别失败，使用默认风格: {e}")
-            return "电影感、写实、自然光影"
+{story_text}
 
-    def _build_batch_prompt(self, batch_text, batch_index):
-        """构建自由模式的批量 prompt，包含地域要求"""
-        prompt = f"""
-你是一位视觉导演。请根据以下故事内容，将其拆分成多个独立的视频镜头。
-每个镜头时长控制在 5 到 15 秒之间。对于每个镜头，输出以下内容，每个镜头之间用 `===========================` 分隔：
-
-【镜头{{段落ID}}-{{镜头序号}}：{{标题}}】
-- 时长：{{duration}}秒
-- 情绪基调：{{emotion}}
-- 地域：{{region}} （根据当前镜头内容，推断最可能的地理位置（国家/地区）及对应的时代背景（如“中国·宋朝”、“美国·当代”）。优先基于本段内容判断；若本段内容缺乏明确时空线索，则参考之前已经出现过的地域（即上文）。输出格式为“国家/地区·时代”，例如“中国·宋朝”或“美国·当代”。若无法推断任何地域，则输出“全球·无明确时代”。）
-- 视觉描述：{{visual}} （一段描述，用于 AI 生成画面。描述应包含场景、主体、动作、光影、色调、时代背景等，但不得包含镜头运动、焦距、快门等技术细节。格式自由，需清晰明确。）
+请严格按照以下格式输出，每个场次用 `【场次X：标题】` 分隔，每个镜头用 `【镜头X】` 分隔。其中 X 从 1 开始递增，不要重复使用同一个数字。每个镜头包含以下字段：
+- 场景：地点，时间，环境
+- 角色：本镜头出现的角色列表（可多个）
+- 动作：人物的具体动作描述
+- 对白：角色A：“台词” / 角色B：“台词” （多个对白用 / 分隔）
+- 视觉描述：关键画面描述，包括光影、色调、氛围等
+- 时长：X秒（建议5-15秒）
+- 情绪基调：XX
+- 地域：国家·时代（例如“中国·宋朝”或“全球·无明确时代”）
 
 注意：
-- 段落ID从当前批的第一段开始递增。
-- 每个段落内镜头序号从1开始递增。
-- 不要输出任何其他内容，只输出这些镜头描述。
+- 输出中不要有任何额外解释，只输出剧本。
+- 对白中的引号使用中文引号“”。
+- 每个字段一行，格式为 `- 字段名：值`。
 
-故事内容：
-{batch_text}
+示例：
+【场次1：开篇】
+【镜头1】
+- 场景：云中谷地·训练场，黄昏
+- 角色：小翼，灰烬（幼龙）
+- 动作：小翼蹲下，轻轻抚摸灰烬的头
+- 对白：小翼：“别听他们的。” / 灰烬：“（发出一声微弱的呜咽）”
+- 视觉描述：金色余晖洒落，灰烬的鳞片暗淡无光，小翼的眼神充满关切
+- 时长：8秒
+- 情绪基调：忧伤、坚定
+- 地域：全球·无明确时代
+【镜头2】
+...
+
+请开始输出：
 """
         return prompt
+
+    def _parse_script(self, text):
+        """解析 AI 返回的剧本文本，生成结构化数据"""
+        scenes = []
+        # 按场次分割
+        scene_blocks = re.split(r'\n\s*【场次\d+：', text)
+        for block in scene_blocks:
+            if not block.strip():
+                continue
+            # 提取场次标题（第一个场次标题可能被切掉，需要特殊处理）
+            if not block.startswith('【场次'):
+                # 第一个块可能没有前导符，需要手动补上
+                block = '【场次1：' + block
+            # 提取场次标题
+            header_match = re.match(r'【场次(\d+)：([^】]+)】', block)
+            if not header_match:
+                continue
+            scene_id = int(header_match.group(1))
+            scene_title = header_match.group(2).strip()
+            # 提取镜头块
+            shot_blocks = re.split(r'\n\s*【镜头\d+】', block)
+            shots = []
+            for shot_block in shot_blocks:
+                if not shot_block.strip() or shot_block.startswith('【场次'):
+                    continue
+                shot = self._parse_shot(shot_block)
+                if shot:
+                    shots.append(shot)
+            scenes.append({
+                'id': scene_id,
+                'title': scene_title,
+                'shots': shots
+            })
+        return scenes
+
+    def _parse_shot(self, shot_block):
+        """解析单个镜头块，返回字典"""
+        shot = {
+            'scene': '',
+            'title': '',
+            'roles': [],
+            'action': '',
+            'dialogue': '',
+            'visual': '',
+            'duration': 10,
+            'emotion': '',
+            'region': '全球·无明确时代'
+        }
+        lines = shot_block.strip().split('\n')
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith('- 场景：'):
+                shot['scene'] = line.split('：', 1)[-1].strip()
+            elif line.startswith('- 角色：'):
+                roles_str = line.split('：', 1)[-1].strip()
+                shot['roles'] = [r.strip() for r in roles_str.split(',')]
+            elif line.startswith('- 动作：'):
+                shot['action'] = line.split('：', 1)[-1].strip()
+            elif line.startswith('- 对白：'):
+                shot['dialogue'] = line.split('：', 1)[-1].strip()
+            elif line.startswith('- 视觉描述：'):
+                shot['visual'] = line.split('：', 1)[-1].strip()
+            elif line.startswith('- 时长：'):
+                dur_str = line.split('：', 1)[-1].strip()
+                try:
+                    shot['duration'] = float(dur_str.replace('秒', ''))
+                except:
+                    pass
+            elif line.startswith('- 情绪基调：'):
+                shot['emotion'] = line.split('：', 1)[-1].strip()
+            elif line.startswith('- 地域：'):
+                shot['region'] = line.split('：', 1)[-1].strip()
+        return shot
+
+    def _write_shots(self, script_data):
+        """将剧本数据写入 shots.txt（工作目录由外部传入，这里需要知道工作目录）"""
+        # 注意：这里需要知道工作目录，但当前类没有 work_dir 属性
+        # 解决方法：在 parse 时传入 work_dir 参数，或者通过 set_work_dir 方法设置。
+        # 我们暂时在调用时由控制器负责写入，因为控制器有 work_dir。
+        pass
 ```
 
 ### parsers\mime_parser.py
@@ -10519,16 +11729,22 @@ class MimeParser(BaseParser):
 ```py
 # parsers/story_parser.py
 """
-情感故事解析器：继承 BatchParser，实现特定的 prompt 构建逻辑。
+情感故事解析器：与文明结构模式对齐，采用相同的两阶段处理逻辑。
 """
 import sys
 import os
+import re
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from .base_batch_parser import BatchParser
 from utils import config_manager
+from utils.concurrent_utils import concurrent_process
+from utils import settings
 
+# 语速设置：字/秒
 WORDS_PER_SECOND = 4.5
+MIN_DURATION = 3.0
+MAX_DURATION = 15.0
 
 class StoryParser(BatchParser):
     def parse(self, raw_text):
@@ -10537,55 +11753,173 @@ class StoryParser(BatchParser):
             "seed": 12345
         }
 
-        print("正在分析情感故事文稿、识别风格并生成视觉描述...")
-        segments_data = self._generate_segments(raw_text)
-        print(f"文稿已分割为 {len(segments_data)} 个逻辑镜头")
+        # 1. 全局语义分段
+        print("正在将全文分割为逻辑段落...")
+        paragraphs = self._split_into_paragraphs(raw_text)
+        if not paragraphs:
+            # 如果分割失败，使用后备方案（按空行分割）
+            print("全局分段失败，使用后备方案（按空行分割）")
+            paragraphs = [p.strip() for p in re.split(r'\n\s*\n', raw_text) if p.strip()]
+        print(f"共分割为 {len(paragraphs)} 个逻辑段落")
 
-        # 根据每个段落的字数重新计算时长
-        for item in segments_data:
-            content = item.get("content", "")
-            raw_duration = max(5, min(20, int(len(content) / WORDS_PER_SECOND)))
-            item["duration"] = raw_duration
+        # 2. 规则切分：将每个段落按句子切分为镜头片段
+        print("开始规则切分（按完整句子+时长约束）...")
+        all_scripts = []  # 每个元素为 (para_text, list_of_scripts)
+        for idx, para in enumerate(paragraphs, start=1):
+            scripts = self._split_into_shot_segments(para)
+            print(f"段落 {idx} 切分为 {len(scripts)} 个镜头")
+            all_scripts.append((para, scripts))
 
-        segments = []
-        for i, item in enumerate(segments_data, start=1):
-            segments.append({
-                "id": i,
-                "title": item["title"],
-                "content": item["content"],
-                "shots": item.get("shots", [{
-                    "visual": item.get("visual", "中景 + 自然景观 + 黄昏暖光 + 理性 + 固定镜头 + 无文字"),
-                    "duration": item.get("duration", 10),
-                    "emotion": item.get("emotion", "")
-                }])
+        # 3. 对每个段落的每个镜头，进行第二次 AI 调用（生成属性）
+        print("开始第二次 AI 调用（生成镜头属性）...")
+        all_segments = []
+        for idx, (para, scripts) in enumerate(all_scripts, start=1):
+            if not scripts:
+                print(f"段落 {idx} 无有效镜头，跳过")
+                continue
+            print(f"处理段落 {idx} 的 {len(scripts)} 个镜头...")
+            shots = self._generate_shot_attributes(para, scripts)
+            all_segments.append({
+                "id": idx,
+                "title": f"段落{idx}",
+                "content": para,
+                "shots": shots
             })
 
+        # 4. 构建最终输出
         output_data = {
             "project": self.story_title or "情感故事",
             "global": default_global,
             "persona": {},
             "scene": {},
-            "segments": segments
+            "segments": all_segments
         }
         return output_data
 
-    def _build_batch_prompt(self, batch_text, batch_index):
-        """构建情感故事模式的批量 prompt"""
-        # 读取人设卡预设
+    def _split_into_paragraphs(self, raw_text, max_chars=300):
+        """
+        调用 AI 将整篇文稿分割成逻辑段落。
+        返回段落列表，每个段落是一个字符串。
+        """
+        prompt = f"""
+你是一个专业的文本分析助手。请将以下整篇文稿，按语义分割成若干个逻辑段落。
+
+要求：
+1. 每个段落应围绕一个相对独立的主题或观点。
+2. 段落的长度应尽量控制在 {max_chars} 字以内。
+3. 段落必须在句号、问号、感叹号等完整句子结束处断开，不能在逗号、顿号等中间断开。
+4. 保持原文的文字顺序，不得打乱。
+5. 不要添加任何额外说明，只输出一个 JSON 数组，每个元素是一个段落的文本。
+
+文稿内容：
+{raw_text}
+"""
+        response = self.call_deepseek(prompt, temperature=0.3, max_tokens=8000)
+        import json
+        try:
+            clean = response.strip()
+            if clean.startswith('```json'):
+                clean = clean[7:]
+            if clean.startswith('```'):
+                clean = clean[3:]
+            if clean.endswith('```'):
+                clean = clean[:-3]
+            clean = clean.strip()
+            paragraphs = json.loads(clean)
+            if isinstance(paragraphs, list):
+                return paragraphs
+            else:
+                raise ValueError("返回的不是数组")
+        except Exception as e:
+            print(f"全局分段失败: {e}")
+            return None
+
+    def _split_into_shot_segments(self, text):
+        """
+        规则切分：将文本按完整句子拆分成若干片段，每个片段时长控制在 [MIN_DURATION, MAX_DURATION] 秒。
+        返回片段列表（每个片段是字符串）。
+        """
+        # 1. 按句子切分（。！？…）保留标点
+        sentences = re.split(r'(?<=[。！？…])', text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        if not sentences:
+            return []
+
+        # 2. 估算每个句子的时长（秒）
+        word_counts = [len(s) for s in sentences]
+        durations = [wc / WORDS_PER_SECOND for wc in word_counts]
+
+        # 3. 合并过短句子，避免拆分过长句子
+        segments = []
+        current_seg = []
+        current_dur = 0.0
+
+        for i, (sent, dur) in enumerate(zip(sentences, durations)):
+            # 如果当前句子本身超过最大时长，强制拆分
+            if dur > MAX_DURATION:
+                if current_seg:
+                    segments.append(''.join(current_seg))
+                    current_seg = []
+                    current_dur = 0.0
+                segments.append(sent)
+                continue
+
+            # 尝试加入当前片段
+            if current_dur + dur <= MAX_DURATION:
+                current_seg.append(sent)
+                current_dur += dur
+            else:
+                if current_seg:
+                    segments.append(''.join(current_seg))
+                current_seg = [sent]
+                current_dur = dur
+
+            # 如果当前片段已满足最小时长，且下一个句子加入后会超过最大时长，则提前保存
+            if current_dur >= MIN_DURATION:
+                if i + 1 < len(durations) and current_dur + durations[i+1] > MAX_DURATION:
+                    segments.append(''.join(current_seg))
+                    current_seg = []
+                    current_dur = 0.0
+
+        # 处理最后的片段
+        if current_seg:
+            segments.append(''.join(current_seg))
+
+        # 4. 后处理：合并时长不足最小值的片段（将过短片段并入前一个或后一个）
+        merged = []
+        for seg in segments:
+            dur = len(seg) / WORDS_PER_SECOND
+            if not merged:
+                merged.append(seg)
+                continue
+            if dur < MIN_DURATION:
+                prev_dur = len(merged[-1]) / WORDS_PER_SECOND
+                if prev_dur + dur <= MAX_DURATION:
+                    merged[-1] += seg
+                else:
+                    merged.append(seg)
+            else:
+                merged.append(seg)
+        return merged
+
+    def _generate_shot_attributes(self, para_text, scripts):
+        """
+        第二次 AI 调用：为每个镜头生成属性（标题、时长、情绪、地域、视觉描述）。
+        传入整个段落原文作为上下文。
+        返回镜头列表，每个镜头包含 script（口播稿）和其他属性。
+        """
+        # 读取人设卡（情感故事）
         preset_name = config_manager.PRESET_EMOTIONAL
         preset_text = ""
         if preset_name:
-            import os
             preset_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompt_presets", preset_name + ".txt")
             if os.path.exists(preset_path):
                 with open(preset_path, 'r', encoding='utf-8') as f:
                     preset_text = f.read().strip()
                 print(f"已加载人设卡预设: {preset_name}")
-            else:
-                print(f"人设卡预设文件不存在: {preset_path}")
 
-        # 构建 prompt（注意：输出格式中包含地域字段）
-        prompt = f"""
+        # 构建 prompt 模板
+        base_prompt = f"""
 你是一位擅长情感故事、人物刻画的视觉导演。请根据以下演讲稿完成两项任务：
 
 第一项：风格识别
@@ -10593,32 +11927,74 @@ class StoryParser(BatchParser):
 - 如果文稿中没有提到任何风格关键词，则由你根据文章的内容、语气、主题，推断最适合的整体视觉风格（偏向情感细腻、人物真实、光影温暖的电影感）。
 - 在生成每个镜头的视觉描述时，必须严格遵循最终确定的风格。
 
-第二项：严格按照原文顺序划分逻辑段落并生成镜头列表
-- 必须严格遵循演讲稿中文字出现的先后顺序划分段落，不得对原文内容进行重新排序、合并或拆分。
-- 每个段落应围绕一个相对独立的主题或情感节点。
-- 对于每个段落，你需要将其拆分成多个独立的镜头（每个镜头时长应控制在 5 到 15 秒之间）。镜头的划分应依据该段落内部的逻辑转折、情感变化或关键动作。
-- 对于每个镜头，输出以下内容，每个镜头之间用 `===========================` 分隔：
-   【镜头{{段落ID}}-{{镜头序号}}：{{标题}}】
+第二项：为以下每个镜头生成属性。
+- 对于每个镜头，你将获得该镜头的口播稿原文片段。请结合全文的语境，为每个镜头生成标题、时长（秒）、情绪基调、地域、视觉描述。
+- 输出格式：每个镜头单独输出，不要包含任何分隔符，直接输出以下字段：
+   【镜头{{序号}}：{{标题}}】
    - 时长：{{duration}}秒
    - 情绪基调：{{emotion}}
-   - 地域：{{region}} （根据当前镜头内容，推断最可能的地理位置（国家/地区）及对应的时代背景（如“中国·宋朝”、“美国·当代”）。优先基于本段内容判断；若本段内容缺乏明确时空线索，则参考之前已经出现过的地域（即上文）。输出格式为“国家/地区·时代”，例如“中国·宋朝”或“美国·当代”。若无法推断任何地域，则输出“全球·无明确时代”。）
-   - 视觉描述：{{visual}} （一段描述，用于 AI 生成画面。该描述必须只包含核心意象、风格、情绪、时代背景，不得包含任何镜头运动、焦距、快门等技术细节。格式自由，但需清晰明确。）
-
-   请严格使用上述格式，每个镜头之间必须用 `===========================` 隔开。
-
-注意：
-- 段落ID从当前批的第一段开始递增。
-- 每个段落内镜头序号从1开始递增。
-- 不要输出任何其他内容，只输出这些镜头描述。
-- 每个镜头的内容必须严格按照上述格式。
+   - 地域：{{region}}（根据当前镜头口播稿原文内容，推断出文中出现的所有地理位置（国家/地区）及其对应的时代背景（如“中国·宋朝”、“美国·当代”）。请严格按口播稿中地域出现的先后顺序输出，多个地域之间用顿号“、”连接。例如，如果口播稿先提到德国后提到中国，则输出“德国·当代、中国·当代”。若全文未提及任何明确地域，则输出“全球·无明确时代”。）
+   - 视觉描述：{{visual}}（一段描述，用于 AI 生成画面。该描述必须只包含核心意象、风格、情绪、时代背景，不得包含任何镜头运动、焦距、快门等技术细节。如果地域字段中包含多个地域，请在视觉描述中自然地融合这些地域的视觉元素。格式自由，但需清晰明确。注意：视觉描述中禁止使用双引号（"），请用逗号或中文标点代替。）
+- 注意：不要输出口播稿字段，因为口播稿已在代码中处理。
 
 **人设卡附加规则**（情感故事适用）：
 {preset_text}
 
-演讲稿：
-{batch_text}
+全文演讲稿：
+{para_text}
+
+请为以下镜头分别生成属性：
 """
-        return prompt
+        # 为每个镜头单独构建 prompt，并并发调用
+        def process_shot(shot_data):
+            idx, script = shot_data
+            prompt = base_prompt + f"\n镜头 {idx} 的口播稿原文：\n{script}\n\n请输出该镜头的属性块："
+            result = self.call_deepseek(prompt, temperature=0.4, max_tokens=800)
+            block = result.strip()
+            # 提取标题
+            header_match = re.search(r'【镜头\d+[：:]([^】]+)】', block)
+            if not header_match:
+                print(f"警告：镜头 {idx} 解析失败，跳过")
+                return None
+            title = header_match.group(1).strip()
+            # 提取时长
+            dur_match = re.search(r'时长[：:]\s*([\d.]+)', block)
+            duration = float(dur_match.group(1)) if dur_match else 10.0
+            # 提取情绪
+            emo_match = re.search(r'情绪基调[：:]\s*([^\n]+)', block)
+            emotion = emo_match.group(1).strip() if emo_match else ""
+            # 提取地域
+            reg_match = re.search(r'地域[：:]\s*([^\n]+)', block)
+            region = reg_match.group(1).strip() if reg_match else "全球"
+            # 提取视觉描述
+            vis_match = re.search(r'视觉描述[：:]\s*(.*?)(?=\n\s*\[?镜头|\Z)', block, re.DOTALL)
+            visual = vis_match.group(1).strip() if vis_match else ""
+            return {
+                "script": script,
+                "title": title,
+                "duration": duration,
+                "emotion": emotion,
+                "region": region,
+                "visual": visual
+            }
+
+        # 准备任务列表
+        tasks = [(i+1, script) for i, script in enumerate(scripts)]
+        # 并发执行
+        results, errors = concurrent_process(
+            tasks,
+            lambda task, _: process_shot(task),
+            max_workers=settings.MAX_WORKERS,
+            ordered=True
+        )
+        # 收集有效结果
+        shots = []
+        for i, res in enumerate(results):
+            if res is not None:
+                shots.append(res)
+            else:
+                print(f"警告：段落中第 {i+1} 个镜头生成失败，跳过")
+        return shots
 ```
 
 ### parsers\__init__.py
@@ -10666,6 +12042,59 @@ class StoryParser(BatchParser):
 
 ### prompt_presets\mime_default.txt
 ```
+
+```
+
+### prompt_presets\hardcore\历史时政深度稿.txt
+```
+你是一位历史时政类深度内容撰稿人，熟悉中国制度史，擅长用历史案例解析当代问题。你将严格按照以下要求创作。
+
+1. 核心定位
+用中国历史（制度史、治理史）视角，解读当代世界各国的结构性困境。每期聚焦一个国家或地区，揭示其“看似强大、实则脆弱”的根源。
+
+2. 文章结构（四段式）
+- 现象段：用该国当前标志性现象（经济、社会问题）引出矛盾。
+- 拆解段：用具体案例描述其结构性陷阱（金融脱实向虚、制度撕裂、文化去势、产业专精等）。
+- 对照段：选取2-3个中国历史案例（优先商鞅变法、郡县制、科举制、盐铁官营、王安石变法、洋务运动），每个案例150-200字，交代背景、关键决策、后果，并精准映射到该国现状。
+- 升华段：点明“中国为什么能看透——因为我们踩过的坑比他们走过的路还多”，用“华夏史的眼睛”收尾。
+
+3. 语言风格
+- 口语化，多用“同志们”“你看”“结果呢”等口语词。
+- 善用反问、对比、排比，如“不是……而是……”句式。
+- 每段结尾要有传播金句，如“没有中央权威，就是一盘散沙”。
+- 所有数字用汉字（如“两千三百年”）。
+- 行文为连续文本，段落间用空行分隔，无编号、无标题。全文约1500-2000字。
+
+4. 历史案例选取
+- 可以自由选取。但一定要符合主题。
+
+5. 敏感词规避
+- 不直接批评当代外国政党、领导人。
+- 不出现极端历史悲剧细节。
+- 对当代中国政策只做正面或中性陈述。
+- 避免“中国威胁”“西方衰落”等对抗性表述，改用“中国经验”“文明互鉴”。
+- 封面提示词中避免使用“中国地图”“国旗”等易触发审核元素。
+
+6. 输出格式
+直接输出完整口播稿，无额外说明。开篇有“同志们，我问你个问题——”，结尾有“时间不会说话，但它会给出答案。我们这代人，正在用华夏史的眼睛，看透这个世界。”
+
+参考案例:
+
+同志们，我问你个问题——印度有全世界最年轻的人口，为什么成不了世界工厂？有全世界最大的民主，为什么连修条路都费劲？答案不在新德里，在中国两千年前的“郡县制”里。今天这期，我带你用华夏史的眼睛，看透印度。
+
+先看现象。印度人口马上超过中国，平均年龄二十八岁，劳动力多得是。英语是官方语言之一，IT人才全球抢手。西方天天吹“印度红利”，说下一个中国就是印度。但现实呢？印度至今有两亿人没用上电，三亿人没有厕所，四亿人生活在贫困线以下。青年失业率超过百分之二十，每年一千二百万年轻人进入劳动力市场，只能创造不到三百万个正规就业岗位。为什么？因为印度的制度是“撕裂”的。印度有二十八个邦，每个邦有自己的法律、税收、政策。你想在印度开个工厂？得先搞明白每个邦的规矩。有的邦要这个证，有的邦要那个批文，有的邦今天这样，明天那样。跨国公司来了，发现供应链根本连不起来。印度有民主，但民主变成了“各邦为政”。中央想推改革，地方不配合。莫迪想搞“印度制造”，土地改革各邦自己搞，劳工改革各邦自己搞，结果就是谁也搞不成。这叫“制度撕裂陷阱”——各唱各的调，谁也干不成事。
+
+两千多年前，中国也差点掉进这个坑。周朝搞的是“分封制”。天子把土地分给诸侯，诸侯再分给大夫，层层分下去。结果呢？诸侯不听天子的，大夫不听诸侯的。春秋五霸，战国七雄，打了几百年。秦始皇统一六国后，干了一件大事——废分封，行郡县。全国设三十六郡，郡守县令都由中央直接任免。法律统一，度量衡统一，车同轨，书同文。这叫“全国一盘棋”。不是不让地方有特色，是“大事中央定，小事地方办”。你想造反？没有自己的军队。你想搞独立？没有自己的财政。结果呢？中国两千多年，不管怎么改朝换代，“郡县制”这个底子从来没变过。这就是为什么中国能集中力量办大事——修长城、挖运河、建高铁，一声令下，全国动起来。印度呢？它从来没有过“郡县制”。英国殖民者走了，留下的是一堆各自为政的土邦。独立后搞了联邦制，但中央弱，地方强。各邦有自己的语言、自己的税收、自己的算盘。华夏史第一眼：没有中央权威的国家，就是一盘散沙。
+
+再看商鞅变法。秦国变法前，各封地有自己的度量衡、自己的货币、自己的法律。你在魏国买一斗米，到秦国不知道是多少。商人在路上走，过一个关卡交一次税。商鞅干了什么？统一度量衡，统一货币，统一法律。废除了关卡，让货物能自由流通。奖励耕战，不管你出身哪里，能打仗、能种地，就有出头之日。这叫“打破地方壁垒”。不是不让地方发展，是“全国一个市场，人人机会平等”。结果呢？秦国从一个边陲穷国，变成超级强国。商鞅变法的核心，就是“把割裂的市场打通，把锁死的人才激活”。印度呢？各邦有自己的税种，货车从一个邦到另一个邦，要停下来交税、换文件。有的邦甚至还在用英制单位，有的邦用公制。人才呢？种姓制度把人锁死，低种姓的再聪明也出不了头。华夏史第二眼：割裂的市场，锁死的人才，是国家最大的浪费。
+
+再往近了看。魏晋南北朝，中国搞“九品中正制”。当官看出身，上品无寒门，下品无世族。你爹是贵族，你就是贵族；你爹是农民，你永远是农民。结果呢？阶层固化，社会死气沉沉。有本事的人出不了头，没本事的人占着位置。隋文帝一拍桌子：改。搞科举制。不管你是谁，考上就能当官。放牛娃能当宰相，穷书生能成栋梁。这叫“打破阶层固化”。不是不要精英，是“精英必须从所有人里选”。结果呢？中国一千多年的科举，让底层永远有上升通道。穷人看到希望，就愿意努力；努力了有回报，国家就有活力。印度呢？种姓制度三千多年了。低种姓的人，连水井都不能跟高种姓共用。想出头？没门。印度精英全是高种姓，低种姓再努力也够不着。华夏史第三眼：没有上升通道的社会，迟早会腐烂。
+
+因为印度没有自己的“华夏史”。印度历史上从来没有真正统一过。孔雀王朝、笈多王朝、莫卧儿帝国，都是松散的邦联。英国殖民者来了，用“分而治之”把印度拆得更碎。独立后，尼赫鲁想搞中央集权，但各邦不答应。中国不一样。我们有两千年的郡县制经验，所以知道“全国一盘棋”有多重要。有商鞅变法的经验，所以知道“打破壁垒”有多重要。有科举制的经验，所以知道“上升通道”有多重要。我们踩过的坑，比印度走过的路还多。所以我们知道：没有中央权威，就是一盘散沙。割裂的市场，锁死的人才，是国家最大的浪费。没有上升通道的社会，迟早会腐烂。印度丢了什么？丢了统一的市场，丢了公平的机会，丢了底层人民的希望。它从“全世界最大的民主国家”，变成了“全世界最乱的一盘散沙”。
+
+印度为什么走散了？因为它从来没有真正“统一”过。各邦为政，种姓锁死，阶层固化。中国为什么越走越紧？因为我们有华夏史的眼睛——郡县制告诉我们全国一盘棋，商鞅告诉我们打破壁垒，科举告诉我们打通上升通道。这三只眼睛，印度没有。它只能看着自己从“人口红利”走向“人口负担”。时间不会说话，但它会给出答案。我们这代人，正在用华夏史的眼睛，看透这个世界。
+
+最后感谢同志们。下一期，我们用华夏史的眼睛，看透巴西——为什么有资源有土地，却逃不出“中等收入陷阱”？同志们，下期再见。
 
 ```
 

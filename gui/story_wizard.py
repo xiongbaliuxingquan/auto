@@ -14,6 +14,16 @@ class StoryWizard:
         self.win.transient(parent)
         self.win.grab_set()
         self.win.protocol("WM_DELETE_WINDOW", self.cancel)
+        # 获取屏幕尺寸
+        screen_width = self.win.winfo_screenwidth()
+        screen_height = self.win.winfo_screenheight()
+        # 窗口尺寸
+        win_width = 600
+        win_height = 500
+        # 计算位置
+        x = (screen_width - win_width) // 2
+        y = (screen_height - win_height) // 2
+        self.win.geometry(f"{win_width}x{win_height}+{x}+{y}")
 
         # 存储答案的字典
         self.answers = {}
@@ -407,39 +417,92 @@ class StoryWizard:
         """将答案拼成人设卡，调用 API 生成口播稿"""
         # 构建人设卡文本
         preset = f"""
-你是一位专业的故事撰稿人。请根据以下要求生成一个完整的故事口播稿，用于视频制作。
+    你是一位专业的故事撰稿人。请根据以下要求生成一个完整的故事口播稿，用于视频制作。
 
-【主题】{self.app.toolbar.title_entry.get() or "未提供主题"}
+    【主题】{self.app.toolbar.title_entry.get() or "未提供主题"}
 
-【创作要求】
-- 形式：{self.answers.get("形式")}
-- 世界观：{self.answers.get("世界观")}
-- 情感基调：{self.answers.get("情感基调")}
-- 风格细化：{self.answers.get("风格细化")}
-- 时代背景：{self.answers.get("时代背景")}
-- 核心看点：{self.answers.get("核心看点")}
-- 目标时长：{self.answers.get("目标时长")}
-- 主角性别：{self.answers.get("主角性别")}
-- 主角年龄：{self.answers.get("主角年龄")}
-- 主角性格：{self.answers.get("主角性格")}
-- 关键情节：{self.answers.get("关键情节")}
-- 情绪走向：{self.answers.get("情绪走向")}
-- 特殊要求：{self.answers.get("特殊要求")}
+    【创作要求】
+    - 形式：{self.answers.get("形式")}
+    - 世界观：{self.answers.get("世界观")}
+    - 情感基调：{self.answers.get("情感基调")}
+    - 风格细化：{self.answers.get("风格细化")}
+    - 时代背景：{self.answers.get("时代背景")}
+    - 核心看点：{self.answers.get("核心看点")}
+    - 目标时长：{self.answers.get("目标时长")}
+    - 主角性别：{self.answers.get("主角性别")}
+    - 主角年龄：{self.answers.get("主角年龄")}
+    - 主角性格：{self.answers.get("主角性格")}
+    - 关键情节：{self.answers.get("关键情节")}
+    - 情绪走向：{self.answers.get("情绪走向")}
+    - 特殊要求：{self.answers.get("特殊要求")}
 
-【输出要求】
-- 口播稿应直接输出，无额外说明。
-- 开篇要有引人入胜的引子，结尾要有回味。
-- 语言生动，适合视频旁白。
-- 全文约{self.answers.get("目标时长")}的朗读量（约每分钟200字）。
-"""
+    【输出要求】
+    - 口播稿应直接输出，无额外说明。
+    - 开篇要有引人入胜的引子，结尾要有回味。
+    - 语言生动，适合视频旁白。
+    - 全文约{self.answers.get("目标时长")}的朗读量（约每分钟200字）。
+    """
+
+        # 构造 metadata 字典
+        metadata = {
+            "形式": self.answers.get("形式"),
+            "世界观": self.answers.get("世界观"),
+            "情感基调": self.answers.get("情感基调"),
+            "风格细化": self.answers.get("风格细化"),
+            "时代背景": self.answers.get("时代背景"),
+            "核心看点": self.answers.get("核心看点"),
+            "目标时长": self.answers.get("目标时长"),
+            "主角性别": self.answers.get("主角性别"),
+            "主角年龄": self.answers.get("主角年龄"),
+            "主角性格": self.answers.get("主角性格"),
+            "关键情节": self.answers.get("关键情节"),
+            "情绪走向": self.answers.get("情绪走向"),
+            "特殊要求": self.answers.get("特殊要求")
+        }
+
+        # 添加日志：开始生成
+        self.app.log("高级向导：正在生成故事，请稍候...")
+
+        # 先关闭窗口，避免卡在窗口上
         self.win.destroy()
-        # 调用现有的故事生成函数
-        from utils.story_to_script import generate_script
+
+        # 在后台线程中调用 API
+        import threading
+        def task():
+            from utils.story_to_script import generate_script
+            try:
+                script = generate_script(preset, "")
+                # 在主线程中执行回调
+                self.app.root.after(0, lambda: self._on_generation_done(script, metadata))
+            except Exception as e:
+                self.app.root.after(0, lambda: self._on_generation_error(e))
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _on_generation_done(self, script, metadata):
+        print("_on_generation_done 被调用")
+        # 将 metadata 格式化为注释（HTML 风格，易读）
+        meta_lines = ["<!-- 元数据开始"]
+        for k, v in metadata.items():
+            if v and v != "无特殊" and v != "无":
+                meta_lines.append(f"{k}：{v}")
+        meta_lines.append("元数据结束 -->")
+        meta_text = "\n".join(meta_lines) + "\n\n"
+        full_script = meta_text + script
+        self.app.log("高级向导：故事生成完成")
         try:
-            script = generate_script(preset, "")
-            self.on_finish(script)
+            print("准备调用 on_finish")
+            self.on_finish(full_script, metadata)
+            print("on_finish 调用完成")
         except Exception as e:
-            messagebox.showerror("错误", f"生成故事失败：{e}")
+            print(f"调用 on_finish 时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            self.app.log(f"高级向导回调失败: {e}")
+
+    def _on_generation_error(self, e):
+        self.app.log(f"高级向导：生成故事失败 - {e}")
+        messagebox.showerror("错误", f"生成故事失败：{e}")
 
     def cancel(self):
         self.win.destroy()

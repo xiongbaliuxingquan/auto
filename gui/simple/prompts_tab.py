@@ -19,3 +19,4 @@ class PromptsTab:
             self.text_widget.insert('end', f"【镜头 {idx}】\n")
             self.text_widget.insert('end', f"{prompt}\n\n")
         self.text_widget.config(state='disabled')
+        # 不再调用 self.app.log，避免属性错误
