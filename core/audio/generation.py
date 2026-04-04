@@ -214,7 +214,7 @@ class AudioGenerationController:
                     self.status[idx]['status'] = 'success'
                     self.status[idx]['audio_path'] = audio_path
                     self.status[idx]['duration'] = duration
-                    self.log(f"片段 {idx} 生成成功，时长 {duration:.2f}s")
+                    # self.log(f"片段 {idx} 生成成功，时长 {duration:.2f}s")
                     # 保存状态到文件
                     self._save_status()
                     cb(idx, True, audio_path, duration)

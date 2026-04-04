@@ -272,6 +272,10 @@ class App:
         # 继续按钮（用于异常恢复）
         self.continue_btn = ttk.Button(btn_frame, text="继续", command=self.continue_generation, state='disabled', width=8)
         self.continue_btn.pack(side='left', padx=2)
+        # 添加视频列表面板
+        from gui.standard_video_panel import StandardVideoPanel
+        self.video_panel = StandardVideoPanel(self.video_frame, self)
+        self.video_panel.frame.pack(fill='both', expand=True, padx=5, pady=5)
 
     def create_edit_panel(self):
         """创建剪辑模块（占位）"""
@@ -592,6 +596,8 @@ class App:
                     self.log("已自动加载口播稿到音频面板")
                 else:
                     self.log("未找到口播稿，请手动加载或生成")
+            if hasattr(self, 'video_panel'):
+                self.video_panel.set_work_dir(self.work_dir)
 
     def _parse_shots_from_txt(self, shots_path):
         shots = []
@@ -1063,14 +1069,21 @@ class App:
             selected_ids = self.remaining_shots
             self.continue_btn.config(state='disabled')
             self.log("继续模式：将生成剩余镜头")
+        elif self.selected_shots_ids is not None:
+            selected_ids = self.selected_shots_ids
+            # 如果是重试，重置 selected_shots_ids 避免后续影响（但会在 workflow_done 中重置）
         else:
-            selected_ids = self.selected_shots_ids if self.is_history_project else None
+            selected_ids = None
 
         self.status_label.config(text="正在生成视频...")
         self.log("\n========== 4/4: 生成视频 ==========")
 
         api_url = config_manager.COMFYUI_API_URL
-        output_dir = os.path.join(self.work_dir, "视频")
+        # 创建带时间戳的视频文件夹
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        video_folder_name = "视频"
+        output_dir = os.path.join(self.work_dir, video_folder_name)
+        os.makedirs(output_dir, exist_ok=True)
 
         # 定义镜头生成完成回调
         def on_shot_done(shot_id):
@@ -1081,10 +1094,13 @@ class App:
                 except Exception as e:
                     self.log(f"视频生成回调执行失败: {e}")
 
+        # 判断是否为一键成片模式
+        is_simple_mode = (self.toolbar.mode_type_var.get() == "一键成片")
         manager = comfyui_manager.ComfyUIManager(
             api_url=api_url,
             output_base_dir=output_dir,
-            on_shot_generated=on_shot_done
+            on_shot_generated=on_shot_done,
+            auto_trim=is_simple_mode   # 仅一键成片模式启用裁剪
         )
         manager.set_log_callback(self.log)
 
@@ -1128,10 +1144,37 @@ class App:
         thread.daemon = True
         thread.start()
 
+    def retake_single_shot(self, shot_id):
+        """标准模式重试单个镜头"""
+        if not self.work_dir or not self.shots_info:
+            messagebox.showerror("错误", "未加载项目或镜头信息")
+            return
+        # 找到目标镜头
+        target_shot = None
+        for s in self.shots_info:
+            if s['id'] == shot_id:
+                target_shot = s
+                break
+        if not target_shot:
+            messagebox.showerror("错误", f"未找到镜头 {shot_id}")
+            return
+
+        # 临时设置 selected_shots_ids 为当前镜头
+        self.selected_shots_ids = [shot_id]
+        self.continue_mode = False
+        self.remaining_shots = None
+        # 调用 run_workflow（会使用 self.selected_shots_ids）
+        self.run_workflow()
+
     def continue_generation(self):
         if not self.work_dir or not self.remaining_shots:
             self.continue_btn.config(state='disabled')
             return
+        # 重置重试选择
+        self.selected_shots_ids = None
+        # 刷新标准模式视频面板
+        if hasattr(self, 'video_panel'):
+            self.video_panel.refresh()
         self.log("手动恢复生成，继续生成剩余镜头...")
         self.run_workflow()
 
@@ -1145,6 +1188,9 @@ class App:
         # 刷新一键成片模式的视频标签页（如果存在）
         if hasattr(self, 'simple_mode') and hasattr(self.simple_mode, 'video_tab'):
             self.simple_mode.video_tab.refresh_video_list()
+        # 刷新标准模式视频面板
+        if hasattr(self, 'video_panel'):
+            self.video_panel.refresh()
 
     def workflow_failed(self):
         self.status_label.config(text="生成视频失败")

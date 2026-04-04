@@ -30,6 +30,11 @@ class FreeParser(BaseParser):
 
     def parse(self, raw_text: str, metadata: Optional[Dict] = None, work_dir: Optional[str] = None,
               log_callback: Optional[callable] = None, verbose: bool = False) -> Dict:
+        """
+        主入口：执行两阶段剧本生成，返回 {"scenes": [...]}
+        log_callback: 接收字符串的回调，用于输出进度信息
+        verbose: 是否输出详细日志（调试用）
+        """
         self.metadata = metadata or {}
         self.work_dir = work_dir
         self.log_callback = log_callback
@@ -109,10 +114,14 @@ class FreeParser(BaseParser):
                     self.log_callback(f"警告：段落{para_idx}缺少局部资产块，跳过")
                 continue
             text = parts[0].strip()
-            local_assets_text = parts[1].strip()
+            local_assets_text = parts[1].strip()   # 原始文本
+            # 解析建议时长
+            duration_match = re.search(r'- 建议时长：\s*(\d+)', local_assets_text)
+            suggested_duration = int(duration_match.group(1)) if duration_match else 0
             paragraphs.append({
                 "text": text,
-                "local_assets_text": local_assets_text
+                "local_assets_text": local_assets_text,
+                "suggested_duration": suggested_duration   # 新增
             })
             # 保存段落局部资产到文件
             if self.work_dir:
@@ -135,22 +144,44 @@ class FreeParser(BaseParser):
                     meta_text += f"- {k}：{v}\n"
             meta_text += "\n"
 
+        # 提取目标时长（分钟）
+        target_duration_min = 0
+        if meta and "目标时长" in meta:
+            dur_str = meta["目标时长"]
+            # 假设格式为 "5分钟" 或 "5"
+            match = re.search(r'(\d+)', dur_str)
+            if match:
+                target_duration_min = int(match.group(1))
+
+        # 构建时长控制说明
+        duration_instruction = ""
+        if target_duration_min > 0:
+            target_seconds = target_duration_min * 60
+            duration_instruction = f"""
+**重要：根据创作元数据，本次故事的目标总时长为 {target_seconds} 秒（{target_duration_min} 分钟）。**
+在生成段落时，你需要为每个段落估算一个合理的时长（秒），并记录在【局部资产】的“建议时长”字段中。所有段落的建议时长总和应接近目标总时长。
+"""
+
         prompt = f"""
 你是一个专业的剧本分析助手。请完成以下任务：
+
+{meta_text}
+{duration_instruction}
 
 1. 将以下故事按语义分割成若干逻辑段落，每个段落应围绕一个相对独立的场景或事件。
 2. 从全文提取全局资产库：角色的固定属性（如外貌、气质、核心设定）、整体视觉风格。全局资产库用文本列表形式，每个资产项以“- 键：值”格式输出，放在“【全局资产库】”下方。
 
-   **重要：角色固定属性必须严格按照以下格式输出，每个字段都要包含，且描述必须明确、肯定，不得使用“或”等模棱两可的词语。如果原文没有明确，请根据上下文推断最可能的一种，并直接写出。**
+   **重要：角色固定属性必须严格按照以下格式输出，每个字段都要包含，且描述必须明确、肯定，不得使用“或”等模棱两可的词语。性别字段只能为“男”或“女”。如果原文没有明确，请根据上下文推断最可能的一种，并直接写出。**
    格式：
    【角色名】 性别：X，年龄：X，发型：X，发色：X，脸型：X，身高：X，体型：X，惯用着装：X，气质描述：X。
 
    示例：
    - 角色固定属性：
      【阿铁】 性别：男，年龄：少年，发型：短发，发色：黑，脸型：圆脸，身高：中等，体型：瘦削，惯用着装：深色短打工匠服，气质描述：坚韧、热血、对锻造充满纯粹热爱。
-     【老道】 性别：男，年龄：老年，发型：长发，发色：花白，脸型：瘦长，身高：高，体型：佝偻，惯用着装：破旧道袍，气质描述：落魄、神秘、深藏不露。
 
-3. 为每个段落提取局部资产库：该段落的场景、角色服装变化（如沾染煤灰、油污）、道具、当前情绪、时间、地域等。局部资产也用文本列表形式，每个资产项以“- 键：值”格式输出。
+3. 为每个段落提取局部资产库：该段落的场景、角色服装变化、道具、当前情绪、时间、地域等。局部资产也用文本列表形式，每个资产项以“- 键：值”格式输出。
+
+   如果指定了目标总时长，请在【局部资产】中添加一行“- 建议时长：X秒”，表示该段落应该占用的时长。
 
 请严格按照以下格式输出，不要添加任何额外解释：
 
@@ -169,10 +200,11 @@ class FreeParser(BaseParser):
 - 时间：白天/夜晚等
 - 地域：国家·时代
 - 情绪：当前情绪基调
+- 建议时长：X秒   （如果指定了目标总时长）
 
 注意：
 - 段落之间用空行分隔。
-- 局部资产中的键名固定为：场景、角色服装、道具、时间、地域、情绪。如果某个资产不存在，可以不写。
+- 局部资产中的键名固定为：场景、角色服装、道具、时间、地域、情绪、建议时长。如果某个资产不存在，可以不写。
 - 角色服装可以是多个角色的描述，用分号分隔。
 
 故事内容：
@@ -182,20 +214,22 @@ class FreeParser(BaseParser):
 
     # ===================== 阶段二：并发生成剧本 =====================
     def _generate_scripts_parallel(self, paragraphs_with_assets: List[Dict], log) -> List[Dict]:
+        """并发生成每个段落的场次数据"""
         total = len(paragraphs_with_assets)
         tasks = []
         for idx, p in enumerate(paragraphs_with_assets):
+            # 构建上一个段落的摘要
             prev_summary = ""
             if idx > 0:
                 prev_text = paragraphs_with_assets[idx-1]['text']
                 prev_summary = prev_text[:100] + "..." if len(prev_text) > 100 else prev_text
-            tasks.append((idx, p['text'], p['local_assets_text'], prev_summary))
+            tasks.append((idx, p['text'], p['local_assets_text'], prev_summary, p.get('suggested_duration', 0)))
 
         results = [None] * total
         with concurrent.futures.ThreadPoolExecutor(max_workers=settings.MAX_WORKERS) as executor:
             future_to_idx = {
-                executor.submit(self._generate_script_for_paragraph, idx, text, local_assets, prev_summary, log): idx
-                for idx, text, local_assets, prev_summary in tasks
+                executor.submit(self._generate_script_for_paragraph, idx, text, local_assets, prev_summary, suggested_duration, log): idx
+                for idx, text, local_assets, prev_summary, suggested_duration in tasks
             }
             for future in concurrent.futures.as_completed(future_to_idx):
                 idx = future_to_idx[future]
@@ -210,7 +244,7 @@ class FreeParser(BaseParser):
                         log(f"段落 {idx+1}/{total} 生成失败: {e}")
                     results[idx] = None
 
-        # 合并结果，失败段落使用后备
+        # 合并结果，对失败段落使用后备场次
         all_scenes = []
         for i, scene in enumerate(results):
             if scene is not None:
@@ -222,9 +256,10 @@ class FreeParser(BaseParser):
                     log(f"段落 {i+1} 使用后备场次")
         return all_scenes
 
-    def _generate_script_for_paragraph(self, idx: int, text: str, local_assets_text: str, prev_summary: str, log) -> Dict:
-        paragraph_index = idx + 1
-        prompt = self._build_paragraph_prompt(text, local_assets_text, prev_summary, paragraph_index)
+    def _generate_script_for_paragraph(self, idx: int, text: str, local_assets_text: str, prev_summary: str, suggested_duration: int, log) -> Dict:
+        """为单个段落生成场次数据"""
+        paragraph_index = idx + 1  # 1-based，用于镜头编号
+        prompt = self._build_paragraph_prompt(text, local_assets_text, prev_summary, paragraph_index, suggested_duration)
         try:
             if log:
                 log(f"段落 {paragraph_index} 正在调用剧本AI...")
@@ -244,7 +279,8 @@ class FreeParser(BaseParser):
             shot['paragraph_index'] = idx
         return scene
 
-    def _build_paragraph_prompt(self, text: str, local_assets_text: str, prev_summary: str, paragraph_index: int) -> str:
+    def _build_paragraph_prompt(self, text: str, local_assets_text: str, prev_summary: str, paragraph_index: int, suggested_duration: int = 0) -> str:
+        """构建单个段落的剧本生成提示词（纯文本输出）"""
         meta = self.metadata
         meta_text = ""
         if meta:
@@ -254,8 +290,26 @@ class FreeParser(BaseParser):
                     meta_text += f"- {k}：{v}\n"
             meta_text += "\n"
 
-        global_text = self.global_assets_text if self.global_assets_text else "无"
+        global_text = self.global_assets_text if hasattr(self, 'global_assets_text') and self.global_assets_text else "无"
         local_text = local_assets_text if local_assets_text else "无"
+
+        duration_instruction = ""
+        if suggested_duration > 0:
+            duration_instruction = f"""
+**重要：此段落的目标时长配额为 {suggested_duration} 秒。**
+请生成该段落的分镜头剧本，确保所有镜头的时长总和接近此配额（允许小幅偏差）。每个镜头时长必须在5-15秒之间，根据剧情需要合理分配。
+"""
+        else:
+            duration_instruction = """
+**重要：每个镜头的时长必须在5-15秒之间**，根据剧情需要合理分配。
+"""
+
+        dialogue_rule = """
+**对白与时长匹配规则**：
+- 中文对白/旁白：按平均语速每秒约3-4个字估算。例如，一句10个字的对白，至少需要3秒。
+- 请根据每个镜头的对白/旁白字数，合理设置该镜头的时长，确保朗读完整不仓促。
+- 如果某个镜头需要较长的对白，请适当增加时长（但不超过15秒），或者拆分对白到多个镜头。
+"""
 
         prompt = f"""
 你是一位专业的影视编剧。请根据以下信息，为这一段故事生成分镜头剧本。注意：镜头编号格式为“【镜头{paragraph_index}-{{序号}}：标题】”。
@@ -273,6 +327,9 @@ class FreeParser(BaseParser):
 【当前段落的故事文本】
 {text}
 
+{duration_instruction}
+{dialogue_rule}
+
 请严格按照以下格式输出，每个镜头单独一块，用空行分隔。镜头顺序按故事发展排列。
 
 【镜头{paragraph_index}-1：标题】
@@ -281,9 +338,9 @@ class FreeParser(BaseParser):
 - 动作：人物的具体动作描述
 - 对白：角色A：“台词” / 角色B：“台词” （多个对白用 / 分隔）
 - 视觉描述：关键画面描述，包括光影、色调、氛围等
-- 时长：X秒（建议5-15秒）
+- 时长：X秒（必须为5-15之间的整数或小数，如8.0）
 - 情绪基调：XX
-- 地域：国家·时代（例如“中国·宋朝”或“全球·无明确时代”）
+- 地域：国家·时代（例如“中国·唐朝”或“全球·无明确时代”）
 
 【镜头{paragraph_index}-2：标题】
 ...
@@ -292,6 +349,7 @@ class FreeParser(BaseParser):
 - 对白中的引号使用中文引号“”。
 - 输出中不要有任何额外解释，只输出镜头块。
 - 如果局部资产中提到了特定服装、道具，请在镜头中体现。
+- 请根据对白字数合理设置时长，避免旁白念不完。
 """
         return prompt
 

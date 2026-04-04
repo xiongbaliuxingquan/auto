@@ -23,6 +23,7 @@ class SimpleMode:
         
         self.create_ui()
         self.frame.pack(fill='both', expand=True)
+        self.current_video_dir = None   # 当前视频生成目录
 
     def _parse_shots_to_scenes(self, shots_path):
         """解析 shots.txt 为 scenes 列表"""
@@ -175,7 +176,7 @@ class SimpleMode:
         self.title_entry = tk.Entry(top_frame, width=30)
         self.title_entry.pack(side='left', padx=5)
         
-        self.wizard_btn = tk.Button(top_frame, text="高级向导", command=self.controller.open_wizard)
+        self.wizard_btn = tk.Button(top_frame, text="故事创作向导", command=self.controller.open_wizard)
         self.wizard_btn.pack(side='left', padx=5)
         
         # 标签页

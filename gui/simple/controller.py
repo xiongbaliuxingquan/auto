@@ -10,6 +10,7 @@ import sys
 import glob
 from datetime import datetime
 from utils import config_manager
+from core import comfyui_manager
 
 class SimpleModeController:
     def __init__(self, ui, data, app):
@@ -311,7 +312,6 @@ class SimpleModeController:
 
     def confirm_and_generate(self):
         """生成视频"""
-        # 复用原来的逻辑，但按钮改为“生成视频”
         work_dir = self.ui.work_dir
         if not work_dir:
             messagebox.showerror("错误", "未设置工作目录")
@@ -324,23 +324,128 @@ class SimpleModeController:
             messagebox.showerror("错误", "未找到易读版分镜文件，请先生成提示词")
             return
         readable_file = max(files, key=os.path.getmtime)
-        from core.comfyui_manager import ComfyUIManager
-        temp_manager = ComfyUIManager("", "")
+        from core.comfyui_manager_simple import SimpleVideoGenerator
+        temp_manager = SimpleVideoGenerator("", "")
         shots_info = temp_manager.get_shots_info(readable_file)
         if not shots_info:
             messagebox.showerror("错误", "解析镜头信息失败")
             return
-        self.app.shots_info = shots_info
-        self.app.work_dir = work_dir
+
+        # 创建带时间戳的视频文件夹
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        video_dir = os.path.join(work_dir, "视频")
+        os.makedirs(video_dir, exist_ok=True)
+        self.ui.current_video_dir = video_dir
+
+        # 设置视频面板的视频目录
+        if hasattr(self.ui, 'video_tab'):
+            self.ui.video_tab.set_video_dir(video_dir)
+
+        # 获取视频设置
+        resolution = self.app.resolution_var.get()
+        if not resolution:
+            messagebox.showerror("错误", "请先选择分辨率")
+            return
+        workflow = self.app.workflow_var.get()
+        if workflow == "WAN2.2":
+            template_file = "video_wan2_2_14B_t2v.json"
+        else:
+            template_file = "LTX2.3文生API.json"
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        template_path = os.path.join(project_root, "workflow_templates", template_file)
+
+        # 创建管理器并生成视频
+        api_url = config_manager.COMFYUI_API_URL
+        manager = SimpleVideoGenerator(api_url=api_url, output_base_dir=video_dir, auto_trim=True)
+        manager.set_log_callback(self.app.log)
+
         title = os.path.basename(work_dir).split('_')[0]
-        self.app.story_title = title
-        self.app.selected_shots_ids = None
-        self.app.edited_prompts = {}
-        # 运行视频生成
-        self.app.run_workflow()
-        # 生成完成后刷新视频标签页（通过回调，需要 app 在完成时调用 self.ui.video_tab.refresh_video_list）
-        # 此处先注册回调（假设 app 有方法可以注册）
-        # 简单起见，我们可以在视频生成线程中手动调用，或者定时刷新，但用户可手动点击刷新按钮
+        # 禁用生成视频按钮
+        self.ui.set_button_state('disabled', 'disabled', 'disabled', 'disabled')
+        self.app.log("正在生成视频，请稍候...")
+
+        def task():
+            try:
+                success, msg = manager.run(title, work_dir, resolution, template_path, selected_shots=None)
+                if success:
+                    self.app.log("视频生成完成")
+                else:
+                    self.app.log(f"视频生成失败: {msg}")
+                    self.app.root.after(0, lambda: messagebox.showerror("错误", f"视频生成失败：{msg}"))
+                # 刷新视频面板
+                self.app.root.after(0, lambda: self._on_video_generated(video_dir))
+            except Exception as e:
+                self.app.log(f"视频生成异常: {e}")
+                self.app.root.after(0, lambda: messagebox.showerror("错误", f"视频生成异常：{e}"))
+            finally:
+                self.app.root.after(0, lambda: self.ui.set_button_state('normal', 'normal', 'normal', 'disabled'))
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _on_video_generated(self, video_dir):
+        """视频生成完成后的回调"""
+        if hasattr(self.ui, 'video_tab'):
+            self.ui.video_tab.set_video_dir(video_dir)
+        self.app.log("视频面板已刷新")
+
+    def retake_single_shot(self, shot_id):
+        """重试生成单个镜头"""
+        work_dir = self.ui.work_dir
+        if not work_dir:
+            messagebox.showerror("错误", "未设置工作目录")
+            return
+        video_dir = self.ui.current_video_dir
+        if not video_dir or not os.path.isdir(video_dir):
+            messagebox.showerror("错误", "未找到当前视频文件夹，请先生成视频")
+            return
+
+        # 获取视频设置
+        resolution = self.app.resolution_var.get()
+        if not resolution:
+            messagebox.showerror("错误", "请先选择分辨率")
+            return
+        workflow = self.app.workflow_var.get()
+        if workflow == "WAN2.2":
+            template_file = "video_wan2_2_14B_t2v.json"
+        else:
+            template_file = "LTX2.3文生API.json"
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        template_path = os.path.join(project_root, "workflow_templates", template_file)
+
+        # 创建管理器
+        api_url = config_manager.COMFYUI_API_URL
+        manager = comfyui_manager.SimpleVideoGenerator(api_url=api_url, output_base_dir=video_dir, auto_trim=True)
+        manager.set_log_callback(self.app.log)
+
+        title = os.path.basename(work_dir).split('_')[0]
+
+        # 禁用重试按钮
+        if hasattr(self.ui, 'video_tab'):
+            self.ui.video_tab.set_retake_button_state(False)
+
+        def task():
+            try:
+                success, msg = manager.run(title, work_dir, resolution, template_path, selected_shots=[shot_id])
+                if success:
+                    self.app.log(f"镜头 {shot_id} 重试成功")
+                else:
+                    self.app.log(f"镜头 {shot_id} 重试失败: {msg}")
+                    self.app.root.after(0, lambda: messagebox.showerror("错误", f"重试失败：{msg}"))
+                # 刷新视频面板
+                self.app.root.after(0, lambda: self._refresh_video_tab(video_dir))
+            except Exception as e:
+                self.app.log(f"重试异常: {e}")
+                self.app.root.after(0, lambda: messagebox.showerror("错误", f"重试异常：{e}"))
+            finally:
+                self.app.root.after(0, lambda: self.ui.video_tab.set_retake_button_state(True))
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _refresh_video_tab(self):
+        """刷新视频面板（在主线程中调用）"""
+        if hasattr(self.ui, 'video_tab'):
+            self.ui.video_tab.refresh_video_list()
 
     def merge_videos(self):
         """合并视频（占位）"""

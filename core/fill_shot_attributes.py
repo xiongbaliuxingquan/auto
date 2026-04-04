@@ -153,17 +153,31 @@ def main():
     # 写入最终文件
     write_shots(output_shots, updated_shots)
     # 生成 shot_subtitle_map.json
-    work_dir = os.path.dirname(output_shots)  # 获取工作目录
+    work_dir = os.path.dirname(output_shots)
     map_path = os.path.join(work_dir, 'shot_subtitle_map.json')
+    
+    # 读取镜头真实时间文件（如果存在）
+    shot_times_path = os.path.join(work_dir, 'shot_times.json')
+    shot_times = []
+    if os.path.exists(shot_times_path):
+        with open(shot_times_path, 'r', encoding='utf-8') as f:
+            shot_times = json.load(f)
+        if len(shot_times) != len(updated_shots):
+            print(f"警告：镜头时间文件数量({len(shot_times)})与镜头数量({len(updated_shots)})不一致，将使用0")
+            shot_times = []
+    
     shot_map = []
-    for shot in updated_shots:
-        # 注意：updated_shots 中需要包含 start_ms, end_ms 时间信息
-        # 如果当前没有这些字段，需要从其他来源获取（见下文说明）
+    for idx, shot in enumerate(updated_shots):
+        start_ms = 0
+        end_ms = 0
+        if shot_times and idx < len(shot_times):
+            start_ms = shot_times[idx].get('start_ms', 0)
+            end_ms = shot_times[idx].get('end_ms', 0)
         shot_map.append({
-            "shot_id": shot['id'],  # 此时 shot['id'] 已是正确的 "段落-镜头" 格式，如 "1-1"、"2-1" 等[3]
-            "start_ms": shot.get('start_ms', 0),  # 需要确保有这个字段
-            "end_ms": shot.get('end_ms', 0),      # 需要确保有这个字段
-            "target_duration_ms": int(shot['duration'] * 1000)  # duration 字段已有
+            "shot_id": shot['id'],
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+            "target_duration_ms": int(shot['duration'] * 1000)
         })
     with open(map_path, 'w', encoding='utf-8') as f:
         json.dump(shot_map, f, ensure_ascii=False, indent=2)

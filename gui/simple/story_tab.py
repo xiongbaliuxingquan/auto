@@ -8,7 +8,7 @@ class StoryTab:
         self.frame = tk.Frame(parent)
         
         # 故事文本编辑区
-        tk.Label(self.frame, text="你的故事（请用讲故事的口吻写下来，越详细越好）").pack(anchor='w', padx=5, pady=(10,0))
+        tk.Label(self.frame, text="故事预览与修订").pack(anchor='w', padx=5, pady=(10,0))
         
         story_frame = tk.Frame(self.frame)
         story_frame.pack(fill='both', expand=True, padx=5, pady=2)

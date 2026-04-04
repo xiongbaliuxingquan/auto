@@ -30,7 +30,7 @@ from utils import config_manager
 from utils.error_logger import log_error
 
 class ComfyUIManager:
-    def __init__(self, api_url, output_base_dir, fps=24, max_duration=20, on_shot_generated=None):
+    def __init__(self, api_url, output_base_dir, fps=24, max_duration=20, on_shot_generated=None, auto_trim=False):
         self.api_url = api_url
         self.output_base_dir = output_base_dir
         self.fps = fps
@@ -39,7 +39,8 @@ class ComfyUIManager:
         self.config = self._load_workflow_config()
         self.max_retries = config_manager.MAX_RETRIES
         self.retry_delay = config_manager.RETRY_DELAY
-        self.on_shot_generated = on_shot_generated   # 新增回调
+        self.on_shot_generated = on_shot_generated
+        self.auto_trim = auto_trim
 
     def _load_workflow_config(self):
         config_path = os.path.join(os.path.dirname(__file__), '..', 'workflow_config.json')
@@ -81,6 +82,7 @@ class ComfyUIManager:
             if match:
                 shot_id = match.group(1)
                 title = match.group(2).rstrip('】)').strip()
+                print(f"解析到镜头: {shot_id}")   # 添加这一行
             else:
                 # 如果仍不匹配，尝试旧格式（严格中文括号）
                 match = re.match(r'【镜头(\d+-\d+)：([^】]+)】', line)
@@ -101,8 +103,15 @@ class ComfyUIManager:
 
             duration_match = re.search(r'时长[：:]\s*(\d+)', body)
             if not duration_match:
+                print(f"【错误】镜头 {shot_id} 未找到时长，body 内容前100字符: {body[:100]}")
                 continue
             duration = int(duration_match.group(1))
+
+            # 提取视觉描述
+            visual = ""
+            vis_match = re.search(r'- 视觉描述[：:]\s*(.*?)(?=\n-|\n【|\Z)', body, re.DOTALL)
+            if vis_match:
+                visual = vis_match.group(1).strip()
 
             prompt_lines = []
             prompt_started = False
@@ -129,7 +138,8 @@ class ComfyUIManager:
                 'id': shot_id,
                 'title': title,
                 'prompt': prompt,
-                'duration': duration
+                'duration': duration,
+                'visual': visual   # 新增这一行
             })
 
         print(f"找到 {len(shots)} 个镜头")
@@ -186,6 +196,18 @@ class ComfyUIManager:
         except Exception as e:
             self._log(f"下载过程中发生未知异常: {e}")
             log_error('comfyui_manager', f'下载未知异常 ({save_path})', str(e))
+            return False
+        
+    def _trim_video(self, input_path, output_path, target_duration):
+        """使用 ffmpeg 裁剪视频至目标时长（从开头取 target_duration 秒）"""
+        import subprocess
+        from utils.audio_utils import FFMPEG
+        cmd = [str(FFMPEG), '-y', '-i', input_path, '-t', str(target_duration), '-c', 'copy', '-avoid_negative_ts', 'make_zero', output_path]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True)
+            return True
+        except subprocess.CalledProcessError as e:
+            self._log(f"视频裁剪失败: {e.stderr}")
             return False
 
     def _generate_single_shot(self, shot, workflow_template, width, height, output_dir,
@@ -297,6 +319,18 @@ class ComfyUIManager:
                                 save_path = os.path.join(output_dir, f"镜头{shot_id}{ext}")
                                 if self.download_video(media_info, save_path):
                                     gen_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    # 自动裁剪（如果开启）
+                                    if self.auto_trim:
+                                        target_duration = shot.get('duration', 0)
+                                        if target_duration > 0:
+                                            base, ext2 = os.path.splitext(save_path)
+                                            trimmed_path = f"{base}_trimmed{ext2}"
+                                            if self._trim_video(save_path, trimmed_path, target_duration):
+                                                os.remove(save_path)
+                                                os.rename(trimmed_path, save_path)
+                                                self._log(f"镜头 {shot_id} 已裁剪至 {target_duration} 秒")
+                                            else:
+                                                self._log(f"镜头 {shot_id} 裁剪失败，保留原始视频")
                                     if self.on_shot_generated:
                                         self.on_shot_generated(shot_id)
                                     return True, shot_id, ext, gen_time
@@ -319,6 +353,20 @@ class ComfyUIManager:
                                     save_path = os.path.join(output_dir, f"镜头{shot_id}{ext}")
                                     if self.download_video(media_info, save_path):
                                         gen_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                        # 自动裁剪（如果开启）
+                                        if self.auto_trim:
+                                            target_duration = shot.get('duration', 0)
+                                            if target_duration > 0:
+                                                base, ext2 = os.path.splitext(save_path)
+                                                trimmed_path = f"{base}_trimmed{ext2}"
+                                                if self._trim_video(save_path, trimmed_path, target_duration):
+                                                    os.remove(save_path)
+                                                    os.rename(trimmed_path, save_path)
+                                                    self._log(f"镜头 {shot_id} 已裁剪至 {target_duration} 秒")
+                                                else:
+                                                    self._log(f"镜头 {shot_id} 裁剪失败，保留原始视频")
+                                        if self.on_shot_generated:
+                                            self.on_shot_generated(shot_id)
                                         return True, shot_id, ext, gen_time
                                     else:
                                         return False, "下载失败", None, None
@@ -496,60 +544,6 @@ class ComfyUIManager:
             self._log(f"所有镜头生成成功，共 {success_count} 个")
             self._write_manifest(manifest, output_dir)
             return True, f"成功 {success_count}/{len(shots_to_generate)}"
-    def _append_video_info_to_readable(self, work_dir, manifest):
-        """将视频信息追加到易读版分镜文件中"""
-        import re
-        readable_file = self.get_latest_readable_file(work_dir)
-        if not readable_file:
-            self._log("未找到易读版分镜文件，无法追加视频信息。")
-            return
-
-        self._log(f"正在为易读版追加视频信息：{readable_file}")
-        with open(readable_file, 'r', encoding='utf-8') as f:
-            content = f.read()
-
-        blocks = re.split(r'\n\s*={5,}\s*\n', content.strip())
-
-        shot_info = {}
-        for item in manifest:
-            if item is None:
-                continue
-            shot_id = item['id']
-            shot_info[shot_id] = (item['file'], item['time'])
-
-        new_blocks = []
-        for block in blocks:
-            header_match = re.search(r'【镜头(\d+-\d+)：', block)
-            if header_match:
-                shot_id = header_match.group(1)
-                file_name, gen_time = shot_info.get(shot_id, (None, None))
-                lines = block.split('\n')
-                new_lines = []
-                inserted = False
-                for line in lines:
-                    new_lines.append(line)
-                    if not inserted and (line.startswith('- 提示词：') or line.startswith('- 分镜设计：')):
-                        if file_name:
-                            new_lines.append(f'- 视频文件：{file_name}')
-                        if gen_time:
-                            new_lines.append(f'- 生成时间：{gen_time}')
-                        inserted = True
-                if not inserted:
-                    if file_name:
-                        new_lines.append(f'- 视频文件：{file_name}')
-                    if gen_time:
-                        new_lines.append(f'- 生成时间：{gen_time}')
-                new_blocks.append('\n'.join(new_lines))
-            else:
-                new_blocks.append(block)
-
-        new_content = '\n===========================\n'.join(new_blocks)
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        final_readable = os.path.join(work_dir, f"分镜结果_易读版_最终_{timestamp}.txt")
-        with open(final_readable, 'w', encoding='utf-8') as f:
-            f.write(new_content)
-        self._log(f"最终易读版已生成：{final_readable}")
 
     def _write_manifest(self, manifest, output_dir):
         """写入 FFmpeg 合并列表（不再生成镜头清单）"""
@@ -561,3 +555,7 @@ class ComfyUIManager:
             for item in success_items:
                 f.write(f"file '{item['file']}'\n")
         self._log(f"FFmpeg 合并列表已保存至: {concat_path}")
+        # 写入视频清单
+        manifest_path = os.path.join(output_dir, "video_manifest.json")
+        with open(manifest_path, 'w', encoding='utf-8') as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=2)

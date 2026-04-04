@@ -1,5 +1,5 @@
 # Project Snapshot
-Generated: 2026-03-31 10:04:23.422406
+Generated: 2026-04-03 16:55:29.227679
 
 ## Project Structure
 - audio整体改造清单.txt
@@ -9,12 +9,15 @@ Generated: 2026-03-31 10:04:23.422406
 - snapshot.py
 - workflow_config.json
 - 应用框架.json
+- 📦项目结构树.txt
 - .vscode\settings.json
 - .vscode\tasks.json
 - core\align_videos.py
 - core\audio_labeler.py
 - core\auto_split_deepseek.py
+- core\auto_split_simple.py
 - core\comfyui_manager.py
+- core\comfyui_manager_simple.py
 - core\extract_prompts.py
 - core\fill_shot_attributes.py
 - core\fish_tts.py
@@ -41,6 +44,7 @@ Generated: 2026-03-31 10:04:23.422406
 - gui\shot_editor.py
 - gui\simple_mode.py
 - gui\standard_mode.py
+- gui\standard_video_panel.py
 - gui\step_manager.py
 - gui\story_wizard.py
 - gui\top_toolbar.py
@@ -57,6 +61,7 @@ Generated: 2026-03-31 10:04:23.422406
 - gui\simple\prompts_tab.py
 - gui\simple\script_tab.py
 - gui\simple\story_tab.py
+- gui\simple\video_tab.py
 - gui\simple\__init__.py
 - parsers\ai_response_cleaner.py
 - parsers\analysis_parser.py
@@ -275,6 +280,7 @@ class App:
         self.continue_mode = False
         self.remaining_shots = None
         self._work_dir_set = None
+        self.video_generation_callbacks = []   # 存储回调函数
 
         # 初始化临时目录
         self.temp_dir = os.path.join(os.path.dirname(__file__), "temp_uploads")
@@ -385,6 +391,10 @@ class App:
         self.toolbar.mode_type_var.trace('w', lambda *args: self.on_mode_type_change())
         self.toolbar.text_type_var.trace('w', lambda *args: self._update_preset_label())
 
+    def register_video_generation_callback(self, callback):
+        """注册视频生成回调，当有镜头生成时调用"""
+        self.video_generation_callbacks.append(callback)
+
     def on_subtitle_generated(self, srt_path):
         """字幕生成后自动设置为有字幕模式"""
         self.toolbar.subtitle_mode_var.set("有字幕")
@@ -492,6 +502,10 @@ class App:
         # 继续按钮（用于异常恢复）
         self.continue_btn = ttk.Button(btn_frame, text="继续", command=self.continue_generation, state='disabled', width=8)
         self.continue_btn.pack(side='left', padx=2)
+        # 添加视频列表面板
+        from gui.standard_video_panel import StandardVideoPanel
+        self.video_panel = StandardVideoPanel(self.video_frame, self)
+        self.video_panel.frame.pack(fill='both', expand=True, padx=5, pady=5)
 
     def create_edit_panel(self):
         """创建剪辑模块（占位）"""
@@ -812,6 +826,8 @@ class App:
                     self.log("已自动加载口播稿到音频面板")
                 else:
                     self.log("未找到口播稿，请手动加载或生成")
+            if hasattr(self, 'video_panel'):
+                self.video_panel.set_work_dir(self.work_dir)
 
     def _parse_shots_from_txt(self, shots_path):
         shots = []
@@ -1283,15 +1299,39 @@ class App:
             selected_ids = self.remaining_shots
             self.continue_btn.config(state='disabled')
             self.log("继续模式：将生成剩余镜头")
+        elif self.selected_shots_ids is not None:
+            selected_ids = self.selected_shots_ids
+            # 如果是重试，重置 selected_shots_ids 避免后续影响（但会在 workflow_done 中重置）
         else:
-            selected_ids = self.selected_shots_ids if self.is_history_project else None
+            selected_ids = None
 
         self.status_label.config(text="正在生成视频...")
         self.log("\n========== 4/4: 生成视频 ==========")
 
         api_url = config_manager.COMFYUI_API_URL
-        output_dir = os.path.join(self.work_dir, "视频")
-        manager = comfyui_manager.ComfyUIManager(api_url=api_url, output_base_dir=output_dir)
+        # 创建带时间戳的视频文件夹
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        video_folder_name = "视频"
+        output_dir = os.path.join(self.work_dir, video_folder_name)
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 定义镜头生成完成回调
+        def on_shot_done(shot_id):
+            # 调用所有注册的回调
+            for cb in self.video_generation_callbacks:
+                try:
+                    cb(shot_id)
+                except Exception as e:
+                    self.log(f"视频生成回调执行失败: {e}")
+
+        # 判断是否为一键成片模式
+        is_simple_mode = (self.toolbar.mode_type_var.get() == "一键成片")
+        manager = comfyui_manager.ComfyUIManager(
+            api_url=api_url,
+            output_base_dir=output_dir,
+            on_shot_generated=on_shot_done,
+            auto_trim=is_simple_mode   # 仅一键成片模式启用裁剪
+        )
         manager.set_log_callback(self.log)
 
         def thread_func():
@@ -1334,10 +1374,37 @@ class App:
         thread.daemon = True
         thread.start()
 
+    def retake_single_shot(self, shot_id):
+        """标准模式重试单个镜头"""
+        if not self.work_dir or not self.shots_info:
+            messagebox.showerror("错误", "未加载项目或镜头信息")
+            return
+        # 找到目标镜头
+        target_shot = None
+        for s in self.shots_info:
+            if s['id'] == shot_id:
+                target_shot = s
+                break
+        if not target_shot:
+            messagebox.showerror("错误", f"未找到镜头 {shot_id}")
+            return
+
+        # 临时设置 selected_shots_ids 为当前镜头
+        self.selected_shots_ids = [shot_id]
+        self.continue_mode = False
+        self.remaining_shots = None
+        # 调用 run_workflow（会使用 self.selected_shots_ids）
+        self.run_workflow()
+
     def continue_generation(self):
         if not self.work_dir or not self.remaining_shots:
             self.continue_btn.config(state='disabled')
             return
+        # 重置重试选择
+        self.selected_shots_ids = None
+        # 刷新标准模式视频面板
+        if hasattr(self, 'video_panel'):
+            self.video_panel.refresh()
         self.log("手动恢复生成，继续生成剩余镜头...")
         self.run_workflow()
 
@@ -1348,6 +1415,12 @@ class App:
         self.continue_mode = False
         self.remaining_shots = None
         self.continue_btn.config(state='disabled')
+        # 刷新一键成片模式的视频标签页（如果存在）
+        if hasattr(self, 'simple_mode') and hasattr(self.simple_mode, 'video_tab'):
+            self.simple_mode.video_tab.refresh_video_list()
+        # 刷新标准模式视频面板
+        if hasattr(self, 'video_panel'):
+            self.video_panel.refresh()
 
     def workflow_failed(self):
         self.status_label.config(text="生成视频失败")
@@ -1506,7 +1579,7 @@ if __name__ == "__main__":
 ### project_snapshot.txt
 ```
 # Project Snapshot
-Generated: 2026-03-31 10:04:23.422406
+Generated: 2026-04-03 16:55:29.227679
 
 ## Project Structure
 - audio整体改造清单.txt
@@ -1516,12 +1589,15 @@ Generated: 2026-03-31 10:04:23.422406
 - snapshot.py
 - workflow_config.json
 - 应用框架.json
+- 📦项目结构树.txt
 - .vscode\settings.json
 - .vscode\tasks.json
 - core\align_videos.py
 - core\audio_labeler.py
 - core\auto_split_deepseek.py
+- core\auto_split_simple.py
 - core\comfyui_manager.py
+- core\comfyui_manager_simple.py
 - core\extract_prompts.py
 - core\fill_shot_attributes.py
 - core\fish_tts.py
@@ -1548,6 +1624,7 @@ Generated: 2026-03-31 10:04:23.422406
 - gui\shot_editor.py
 - gui\simple_mode.py
 - gui\standard_mode.py
+- gui\standard_video_panel.py
 - gui\step_manager.py
 - gui\story_wizard.py
 - gui\top_toolbar.py
@@ -1564,6 +1641,7 @@ Generated: 2026-03-31 10:04:23.422406
 - gui\simple\prompts_tab.py
 - gui\simple\script_tab.py
 - gui\simple\story_tab.py
+- gui\simple\video_tab.py
 - gui\simple\__init__.py
 - parsers\ai_response_cleaner.py
 - parsers\analysis_parser.py
@@ -1782,6 +1860,7 @@ class App:
         self.continue_mode = False
         self.remaining_shots = None
         self._work_dir_set = None
+        self.video_generation_callbacks = []   # 存储回调函数
 
         # 初始化临时目录
         self.temp_dir = os.path.join(os.path.dirname(__file__), "temp_uploads")
@@ -1892,6 +1971,10 @@ class App:
         self.toolbar.mode_type_var.trace('w', lambda *args: self.on_mode_type_change())
         self.toolbar.text_type_var.trace('w', lambda *args: self._update_preset_label())
 
+    def register_video_generation_callback(self, callback):
+        """注册视频生成回调，当有镜头生成时调用"""
+        self.video_generation_callbacks.append(callback)
+
     def on_subtitle_generated(self, srt_path):
         """字幕生成后自动设置为有字幕模式"""
         self.toolbar.subtitle_mode_var.set("有字幕")
@@ -1999,6 +2082,10 @@ class App:
         # 继续按钮（用于异常恢复）
         self.continue_btn = ttk.Button(btn_frame, text="继续", command=self.continue_generation, state='disabled', width=8)
         self.continue_btn.pack(side='left', padx=2)
+        # 添加视频列表面板
+        from gui.standard_video_panel import StandardVideoPanel
+        self.video_panel = StandardVideoPanel(self.video_frame, self)
+        self.video_panel.frame.pack(fill='both', expand=True, padx=5, pady=5)
 
     def create_edit_panel(self):
         """创建剪辑模块（占位）"""
@@ -2319,6 +2406,8 @@ class App:
                     self.log("已自动加载口播稿到音频面板")
                 else:
                     self.log("未找到口播稿，请手动加载或生成")
+            if hasattr(self, 'video_panel'):
+                self.video_panel.set_work_dir(self.work_dir)
 
     def _parse_shots_from_txt(self, shots_path):
         shots = []
@@ -2790,15 +2879,39 @@ class App:
             selected_ids = self.remaining_shots
             self.continue_btn.config(state='disabled')
             self.log("继续模式：将生成剩余镜头")
+        elif self.selected_shots_ids is not None:
+            selected_ids = self.selected_shots_ids
+            # 如果是重试，重置 selected_shots_ids 避免后续影响（但会在 workflow_done 中重置）
         else:
-            selected_ids = self.selected_shots_ids if self.is_history_project else None
+            selected_ids = None
 
         self.status_label.config(text="正在生成视频...")
         self.log("\n========== 4/4: 生成视频 ==========")
 
         api_url = config_manager.COMFYUI_API_URL
-        output_dir = os.path.join(self.work_dir, "视频")
-        manager = comfyui_manager.ComfyUIManager(api_url=api_url, output_base_dir=output_dir)
+        # 创建带时间戳的视频文件夹
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        video_folder_name = "视频"
+        output_dir = os.path.join(self.work_dir, video_folder_name)
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 定义镜头生成完成回调
+        def on_shot_done(shot_id):
+            # 调用所有注册的回调
+            for cb in self.video_generation_callbacks:
+                try:
+                    cb(shot_id)
+                except Exception as e:
+                    self.log(f"视频生成回调执行失败: {e}")
+
+        # 判断是否为一键成片模式
+        is_simple_mode = (self.toolbar.mode_type_var.get() == "一键成片")
+        manager = comfyui_manager.ComfyUIManager(
+            api_url=api_url,
+            output_base_dir=output_dir,
+            on_shot_generated=on_shot_done,
+            auto_trim=is_simple_mode   # 仅一键成片模式启用裁剪
+        )
         manager.set_log_callback(self.log)
 
         def thread_func():
@@ -2841,10 +2954,37 @@ class App:
         thread.daemon = True
         thread.start()
 
+    def retake_single_shot(self, shot_id):
+        """标准模式重试单个镜头"""
+        if not self.work_dir or not self.shots_info:
+            messagebox.showerror("错误", "未加载项目或镜头信息")
+            return
+        # 找到目标镜头
+        target_shot = None
+        for s in self.shots_info:
+            if s['id'] == shot_id:
+                target_shot = s
+                break
+        if not target_shot:
+            messagebox.showerror("错误", f"未找到镜头 {shot_id}")
+            return
+
+        # 临时设置 selected_shots_ids 为当前镜头
+        self.selected_shots_ids = [shot_id]
+        self.continue_mode = False
+        self.remaining_shots = None
+        # 调用 run_workflow（会使用 self.selected_shots_ids）
+        self.run_workflow()
+
     def continue_generation(self):
         if not self.work_dir or not self.remaining_shots:
             self.continue_btn.config(state='disabled')
             return
+        # 重置重试选择
+        self.selected_shots_ids = None
+        # 刷新标准模式视频面板
+        if hasattr(self, 'video_panel'):
+            self.video_panel.refresh()
         self.log("手动恢复生成，继续生成剩余镜头...")
         self.run_workflow()
 
@@ -2855,6 +2995,12 @@ class App:
         self.continue_mode = False
         self.remaining_shots = None
         self.continue_btn.config(state='disabled')
+        # 刷新一键成片模式的视频标签页（如果存在）
+        if hasattr(self, 'simple_mode') and hasattr(self.simple_mode, 'video_tab'):
+            self.simple_mode.video_tab.refresh_video_list()
+        # 刷新标准模式视频面板
+        if hasattr(self, 'video_panel'):
+            self.video_panel.refresh()
 
     def workflow_failed(self):
         self.status_label.config(text="生成视频失败")
@@ -3060,6 +3206,136 @@ if __name__ == "__main__":
 │   └── ffmpeg/
 │       └── LICENSE.txt             # FFmpeg许可证文件
 
+```
+
+### 📦项目结构树.txt
+```
+📦 项目根目录
+│
+├── 🚀 gui_launcher.py               # 主程序入口，总控台GUI。整合所有模块，提供侧边栏导航、状态栏、日志、工作流调度
+│
+├── 📄 配置文件
+│   ├── workflow_config.json         # 工作流节点配置，定义LTX2.3和WAN2.2的节点ID映射（提示词、分辨率等）
+│   ├── 应用框架.json                 # 项目结构的文本描述文件（未在代码中直接使用）
+│   └── audio整体改造清单.txt         # 音频模块的重构计划文档（已按计划实施）
+│
+├── 🧩 core/                         # 核心业务逻辑模块（与UI解耦）
+│   ├── __init__.py
+│   ├── txt_to_json.py               # 【第一步】使用AI将原始文稿解析为结构化的JSON（segments, shots等）
+│   ├── paragraph_splitter.py        # 【模块1】分割段落 + 提取全局信息（人设卡、场景等）
+│   ├── auto_split_deepseek.py       # 【模块2】根据JSON生成分镜设计和提示词（核心AI调用，支持并发）
+│   ├── extract_prompts.py           # 【模块3】从分镜文件提取提示词，并调用AI翻译成英文
+│   ├── refine_shots_by_srt.py       # 【模块4】根据SRT字幕优化镜头时长，生成shots_base.txt和映射文件
+│   ├── fill_shot_attributes.py      # 【模块5】为镜头填充属性（标题、情绪、地域、视觉描述）
+│   ├── generate_first_frame_prompts.py # 【模块6】生成首帧提示词（用于图生视频）
+│   ├── align_videos.py              # 视频后处理：根据字幕映射对视频进行精确裁剪对齐
+│   ├── comfyui_manager.py           # ComfyUI API管理器，负责提交工作流、监控状态、下载视频，支持重试
+│   ├── audio_labeler.py             # 文本标签生成器，调用AI为口播稿添加[inhale]等语音标签
+│   ├── fish_tts.py                  # Fish S2语音合成模块，单段音频生成、参考音频文本提取
+│   ├── qwen_tts.py                  # 千问TTS模块，AI生成参考音频
+│   │
+│   └── 📁 audio/                    # 音频核心模块（重构后的模块化代码）
+│       ├── reference.py             # 模块1：参考音频管理器（上传、AI生成、转录、缓存）
+│       ├── segment_labeler.py       # 模块2：段落润色器（调用audio_labeler生成带标签的片段）
+│       ├── generation.py            # 模块3：音频生成控制器（队列、状态、重试、进度回调）
+│       ├── playback.py              # 模块4：播放控制器（封装pygame播放逻辑）
+│       ├── subtitle.py              # 模块5：字幕生成器（调用阿里云语音识别）
+│       ├── final_combine.py         # 模块6：最终音频合成器（合并片段，生成时间轴）
+│       └── loader.py                # 音频项目加载器（从工作目录加载段落、音频、缓存）
+│
+├── 🖥️ gui/                          # 图形界面模块（基于tkinter）
+│   ├── __init__.py
+│   ├── audio_panel.py               # 音频生成面板，集成音频模块1-6，提供UI控制
+│   ├── shot_editor.py               # 镜头编辑器，用于选择/编辑/ AI重写镜头提示词
+│   ├── story_wizard.py              # 故事创作向导，通过多步问答生成口播稿
+│   ├── simple_mode.py               # 一键成片模式界面
+│   ├── standard_mode.py             # 标准模式界面（人物、场景、大纲、口播稿四个标签页）
+│   ├── top_toolbar.py               # 顶部工具栏（故事标题、API Key、模型选择等）
+│   ├── countdown_timer.py           # 倒计时管理器
+│   ├── step_manager.py              # 步骤管理器，按顺序执行核心脚本（txt_to_json等）
+│   ├── workflow_executor.py         # 工作流执行器（调用comfyui_manager）
+│   ├── log_viewer.py                # 大窗口日志查看器
+│   ├── preset_manager.py            # 人设卡管理窗口
+│   ├── settings_dialog.py           # 参数设置对话框
+│   ├── common_widgets.py            # 通用UI组件（进度条、日志框）
+│   ├── ui_components.py             # 基础UI组件
+│   ├── tts_tutorial.py              # TTS教程文本常量
+│   │
+│   ├── 📁 audio/                    # 音频相关的UI子组件
+│   │   ├── retake_manager.py        # 重录管理器，处理音频重录请求和队列
+│   │   └── segment_list.py          # 段落列表组件
+│   │
+│   └── 📁 simple/                   # 一键成片模式的子组件
+│       ├── controller.py            # 控制器，协调数据与界面
+│       ├── data.py                  # 数据模型
+│       ├── story_tab.py             # 故事标签页
+│       ├── script_tab.py            # 剧本标签页
+│       ├── assets_tab.py            # 资产库标签页
+│       └── prompts_tab.py           # 提示词标签页
+│
+├── 📖 parsers/                      # 文本解析器（根据模式将文稿解析为结构）
+│   ├── __init__.py
+│   ├── base_parser.py               # 解析器基类
+│   ├── base_batch_parser.py         # 支持分批并发的解析器基类
+│   ├── analysis_parser.py           # 文明结构模式解析器（侧重宏观叙事）
+│   ├── story_parser.py              # 情感故事模式解析器
+│   ├── mime_parser.py               # 动画默剧模式解析器（待实现）
+│   ├── free_parser.py               # 自由模式解析器
+│   └── ai_response_cleaner.py       # AI响应清洗工具（修复JSON格式）
+│
+├── 🛠️ utils/                        # 工具函数模块
+│   ├── __init__.py
+│   ├── ai_utils.py                  # DeepSeek API调用基础函数
+│   ├── config_manager.py            # 配置管理器（API Key、模型、用户设置）
+│   ├── settings.py                  # 并发参数设置（GLOBAL_THRESHOLD, MAX_WORKERS等）
+│   ├── process_runner.py            # 子进程运行器，实时捕获输出
+│   ├── concurrent_utils.py          # 并发处理工具（线程池、分块）
+│   ├── subtitle_utils.py            # SRT字幕解析工具
+│   ├── translation_utils.py         # 翻译工具（调用DeepSeek）
+│   ├── audio_utils.py               # 音频工具（获取时长、ffmpeg路径）
+│   ├── aliyun_file_trans.py         # 阿里云语音识别（字幕生成）
+│   ├── error_logger.py              # 统一错误日志记录
+│   ├── system_doctor.py             # 系统诊断工具（分析错误日志）
+│   ├── story_to_script.py           # 根据故事生成口播稿
+│   ├── style_generator.py           # 根据故事生成风格人设卡
+│   ├── extract_persona_scene.py     # 从故事提取人物和场景设定
+│   ├── clean_subtitles.py           # 清洗字幕（与口播稿对齐）
+│   ├── align_video_duration.py      # 视频时长对齐（变速处理）
+│   ├── subtitle_generator.py        # 字幕生成（使用faster-whisper）
+│   ├── config.json                  # API Key配置文件（示例/默认）
+│   └── user_settings.json           # 用户参数配置文件
+│
+├── 📝 prompt_presets/               # 人设卡预设文件
+│   ├── civil_default.txt            # 文明结构模式默认人设卡
+│   ├── emotional_default.txt        # 情感故事模式默认人设卡
+│   ├── mime_default.txt             # 动画默剧模式默认人设卡
+│   ├── mime2.txt                    # 备用预设
+│   └── hardcore/                    # 深度历史稿预设
+│       └── 历史时政深度稿.txt         # 一个示例深度稿件
+│
+├── 🔧 workflow_templates/           # ComfyUI工作流模板文件
+│   ├── __init__.py
+│   ├── LTX2.3文生API.json           # LTX2.3文生视频模板
+│   ├── video_wan2_2_14B_t2v.json    # WAN2.2文生视频模板
+│   ├── FishS2Clone.json             # Fish S2语音克隆模板
+│   ├── QwenTTS.json                 # 千问TTS模板
+│   └── Wisper.json                  # Whisper语音识别模板
+│
+├── 📁 tools/                        # 第三方工具
+│   └── ffmpeg/                      # FFmpeg工具
+│       └── LICENSE.txt
+│
+├── 📁 examples/                     # 示例文件
+│   └── __init__.py
+│
+├── 📄 其他文件
+│   ├── project_snapshot.txt         # 项目快照文件（由snapshot.py生成）
+│   ├── snapshot.py                  # 项目快照生成脚本
+│   └── LTX2.3精准提示词.txt          # LTX2.3提示词模板记录文档
+│
+└── 📁 .vscode/                      # VSCode配置
+    ├── settings.json
+    └── tasks.json                   # Git自动提交任务
 ```
 
 ### .vscode\settings.json
@@ -3927,6 +4203,448 @@ if __name__ == "__main__":
 
 ```
 
+### core\auto_split_simple.py
+```py
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+auto_split_simple.py
+一键成片模式：从资产库和 shots.txt 生成英文视频提示词（LTX 2.3 格式）。
+输入：工作目录
+输出：易读版分镜文件（含提示词）、shot_data.json
+"""
+
+import sys
+import os
+import io
+import re
+import json
+import argparse
+import traceback
+import time
+import hashlib
+from datetime import datetime
+from typing import List, Dict
+
+# 强制控制台输出 UTF-8
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from utils import settings, concurrent_utils
+from utils.ai_utils import call_deepseek
+from utils.error_logger import log_error
+
+# 日志目录
+LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+# ===================== 带时间戳的日志 =====================
+def log(msg):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+
+# ===================== 重复检测 =====================
+def has_repetition(text: str) -> bool:
+    """检测文本中是否存在大量重复字符"""
+    if re.search(r'([\u4e00-\u9fa5])\1{4,}', text):   # 连续5个相同中文字符
+        return True
+    if re.search(r'\b(\w+)\s+\1\s+\1\b', text):       # 英文单词重复3次
+        return True
+    return False
+
+# ===================== 翻译辅助 =====================
+def translate_chunk(text: str, cache_file: str) -> str:
+    """翻译一段中文文本为英文，使用文件缓存"""
+    if os.path.exists(cache_file):
+        with open(cache_file, 'r', encoding='utf-8') as f:
+            return f.read()
+    try:
+        prompt = f"请将以下中文翻译成英文，只输出英文翻译，不要添加任何解释或额外内容：\n\n{text}"
+        result = call_deepseek(prompt, temperature=0.3, max_tokens=2000)
+        result = result.strip()
+        # 保存缓存
+        with open(cache_file, 'w', encoding='utf-8') as f:
+            f.write(result)
+        return result
+    except Exception as e:
+        log(f"翻译失败: {e}，使用原文")
+        return text
+
+def translate_global_assets(work_dir: str) -> str:
+    """读取 assets_global.txt，翻译其中的描述性内容，返回英文版文本"""
+    global_path = os.path.join(work_dir, "assets_global.txt")
+    if not os.path.exists(global_path):
+        return ""
+
+    with open(global_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    # 检查是否已经翻译过（通过缓存文件）
+    cache_path = os.path.join(work_dir, "assets_global_en.txt")
+    if os.path.exists(cache_path):
+        with open(cache_path, 'r', encoding='utf-8') as f:
+            return f.read()
+
+    # 解析整体视觉风格（第一行）
+    style_match = re.search(r'- 整体视觉风格：\s*(.*?)(?=\n-|\n\Z)', content, re.DOTALL)
+    overall_style = ""
+    if style_match:
+        original_style = style_match.group(1).strip()
+        if re.search(r'[\u4e00-\u9fa5]', original_style):
+            overall_style = translate_chunk(original_style, os.path.join(work_dir, "trans_cache_style.txt"))
+        else:
+            overall_style = original_style
+
+    # 解析角色固定属性块（从“- 角色固定属性：”之后开始）
+    char_block_match = re.search(r'- 角色固定属性：\s*\n(.*?)(?=\n-|\n\Z)', content, re.DOTALL)
+    char_lines = []
+    if char_block_match:
+        char_block = char_block_match.group(1)
+        # 按行分割，每行是一个角色描述（以“  【”开头）
+        for line in char_block.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            # 匹配角色描述行
+            match = re.search(r'【.*?】\s*性别：[^，]+，年龄：[^，]+，发型：[^，]+，发色：[^，]+，脸型：[^，]+，身高：[^，]+，体型：[^，]+，惯用着装：[^，]+，气质描述：([^，]+)', line)
+            if match:
+                original_trait = match.group(1).strip()
+                if re.search(r'[\u4e00-\u9fa5]', original_trait):
+                    # 为每个角色生成独立缓存文件（基于原文哈希）
+                    hash_key = hashlib.md5(line.encode()).hexdigest()[:8]
+                    cache_trait = os.path.join(work_dir, f"trans_cache_char_{hash_key}.txt")
+                    translated_trait = translate_chunk(original_trait, cache_trait)
+                    line = line.replace(f"气质描述：{original_trait}", f"气质描述：{translated_trait}")
+                char_lines.append(f"  {line}")
+            else:
+                # 如果不是角色描述行（如空行或注释），跳过
+                pass
+
+    # 组装英文版资产文本
+    en_content = f"- 整体视觉风格：{overall_style}\n"
+    if char_lines:
+        en_content += "- 角色固定属性：\n"
+        en_content += "\n".join(char_lines)
+
+    # 保存缓存
+    with open(cache_path, 'w', encoding='utf-8') as f:
+        f.write(en_content)
+    return en_content
+
+# ===================== 镜头解析 =====================
+def parse_shots_file(shots_path: str) -> List[Dict]:
+    """解析 shots.txt，返回镜头列表"""
+    shots = []
+    with open(shots_path, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+
+    i = 0
+    total = len(lines)
+    while i < total:
+        line = lines[i].strip()
+        if line.startswith('【镜头') and '：' in line:
+            match = re.match(r'【镜头(\d+)-(\d+)：([^】]*)】', line)
+            if not match:
+                match_old = re.match(r'【镜头(\d+)：([^】]*)】', line)
+                if match_old:
+                    seg_id = 1
+                    shot_idx = int(match_old.group(1))
+                    title = match_old.group(2).strip()
+                else:
+                    i += 1
+                    continue
+            else:
+                seg_id = int(match.group(1))
+                shot_idx = int(match.group(2))
+                title = match.group(3).strip()
+
+            shot = {
+                'seg_id': seg_id,
+                'shot_idx': shot_idx,
+                'title': title,
+                'scene': '',
+                'roles': [],
+                'action': '',
+                'dialogue': '',
+                'visual': '',
+                'duration': 10.0,
+                'emotion': '',
+                'region': '全球·无明确时代'
+            }
+
+            i += 1
+            while i < total and not lines[i].strip().startswith('【镜头') and not lines[i].strip().startswith('==========================='):
+                subline = lines[i].strip()
+                if subline.startswith('- 场景：'):
+                    shot['scene'] = subline.split('：', 1)[-1].strip()
+                elif subline.startswith('- 角色：'):
+                    roles_str = subline.split('：', 1)[-1].strip()
+                    shot['roles'] = [r.strip() for r in roles_str.split(',')]
+                elif subline.startswith('- 动作：'):
+                    shot['action'] = subline.split('：', 1)[-1].strip()
+                elif subline.startswith('- 对白：'):
+                    shot['dialogue'] = subline.split('：', 1)[-1].strip()
+                elif subline.startswith('- 视觉描述：'):
+                    shot['visual'] = subline.split('：', 1)[-1].strip()
+                elif subline.startswith('- 时长：'):
+                    dur_str = subline.split('：', 1)[-1].strip()
+                    try:
+                        shot['duration'] = float(dur_str.replace('秒', ''))
+                    except:
+                        pass
+                elif subline.startswith('- 情绪基调：'):
+                    shot['emotion'] = subline.split('：', 1)[-1].strip()
+                elif subline.startswith('- 地域：'):
+                    shot['region'] = subline.split('：', 1)[-1].strip()
+                i += 1
+            shots.append(shot)
+        else:
+            i += 1
+    return shots
+
+# ===================== 读取资产文件 =====================
+def read_asset_file(filepath: str) -> str:
+    if os.path.exists(filepath):
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read().strip()
+    return ""
+
+# ===================== 构建单个镜头的 prompt =====================
+def build_shot_prompt(shot: Dict, global_assets: str, local_assets: str) -> str:
+    """构建提示词，global_assets 已经是英文版"""
+    roles_str = ', '.join(shot['roles']) if shot['roles'] else '无'
+
+    # 从全局资产中提取整体视觉风格（英文）
+    overall_style = ""
+    if global_assets:
+        style_match = re.search(r'- 整体视觉风格：\s*(.*?)(?=\n-|\n\Z)', global_assets, re.DOTALL)
+        if style_match:
+            overall_style = style_match.group(1).strip()
+
+    style_instruction = ""
+    if overall_style:
+        style_instruction = f"""
+【整体视觉风格】（必须严格遵循，不得偏离）
+{overall_style}
+"""
+
+    # 从全局资产中提取角色固定特征（英文）
+    character_desc = ""
+    if global_assets:
+        match = re.search(
+            r'【.*?】\s*性别：[^，]+，年龄：[^，]+，发型：[^，]+，发色：[^，]+，脸型：[^，]+，身高：[^，]+，体型：[^，]+，惯用着装：[^，]+，气质描述：[^，]+',
+            global_assets
+        )
+        if match:
+            character_desc = match.group(0).strip()
+
+    # 从局部资产中提取临时服装描述（中文）
+    temp_clothing = ""
+    if local_assets:
+        clothing_match = re.search(r'角色服装：\s*([^\n]+)', local_assets)
+        if clothing_match:
+            temp_clothing = clothing_match.group(1).strip()
+
+    guidance = ""
+    if character_desc:
+        guidance += f"""
+【角色固定特征】（必须保留，描述人物的发型、发色、脸型、身高、体型、惯用着装等）
+{character_desc}
+"""
+    if temp_clothing:
+        guidance += f"""
+【当前镜头临时变化】（服装状态、污渍等）
+{temp_clothing}
+"""
+    guidance += """
+请生成英文视频提示词，其中 Subject + Action 部分必须：
+- 包含角色的固定特征（发型、脸型、身高、体型、惯用着装等）
+- 融入临时变化（如污渍、特殊服装）
+- 结合当前动作
+- **重要：不要使用任何方括号占位符（如 [发型]），必须写出具体描述，例如“short black hair, round face”。**
+"""
+
+    prompt = f"""你是一位专业的视频分镜设计师。请根据以下信息，为这个镜头生成一个高质量的英文视频提示词，严格遵循 LTX 2.3 格式。
+
+{style_instruction}
+
+{guidance}
+
+【当前镜头原始信息】
+- 场景：{shot['scene']}
+- 角色：{roles_str}
+- 动作：{shot['action']}
+- 对白：{shot['dialogue']}
+- 视觉描述：{shot['visual']}
+- 时长：{shot['duration']}秒
+- 情绪：{shot['emotion']}
+- 地域：{shot['region']}
+
+请生成一个英文视频提示词，必须包含以下标签（英文），按顺序输出，每个标签占一行，标签后跟冒号和内容：
+
+Overall Atmosphere:
+Setting:
+Subject + Action:
+Lens + Focal Length:
+Visual Style:  （必须基于【整体视觉风格】中的描述，用英文书写，并保持风格一致，禁止出现任何中文字符）
+Movement / Time:
+Protection Conditions: No text, no flicker, no logo.
+
+**重要**：请严格模仿以下示例的格式和语言风格，特别是 Visual Style 部分要使用英文描述（如 "Soft, delicate colors, dreamlike lighting"），不要使用中文。对白部分保留中文引号。
+
+示例：
+Overall Atmosphere: A vast, lonely, and melancholic scene at dusk, with a sense of suppressed longing.
+Setting: At the foot of the Great Wall in the Qin Dynasty, on a loess slope during the golden hour of sunset.
+Subject + Action: The silhouette of a sturdy young laborer named Shi, sitting alone on the slope, facing the distant horizon. He is slightly hunched over, head bowed.
+Lens + Focal Length: Wide-angle lens, low angle to exaggerate scale, strong backlighting.
+Visual Style: Studio Ghibli-style 2D animation. Soft, delicate colors, dreamlike lighting, painterly quality.
+Movement / Time: Extremely slow push-in on the static subject over 10 seconds, dust particles moving gently in backlight.
+Protection Conditions: No text, no flicker, no logo.
+
+要求：
+- 所有内容用英文书写，但对白、旁白部分必须保留中文，并用中文引号“”包裹。
+- 对白应放在 Subject + Action 中，格式如：某人说：“对白内容”。
+- 如果对白字段为空，则不要在 Subject + Action 中加入对白。
+- 严格基于提供的视觉描述、角色、动作等信息，可以适当丰富技术细节，但不得改变核心意象。
+- 防护条件固定为“No text, no flicker, no logo.”。
+- 不要添加任何额外解释，只输出上述标签和内容。
+
+请开始输出："""
+    return prompt
+
+# ===================== 并发工作函数（带重试和重复检测） =====================
+def process_shot(shot: Dict, global_assets: str, local_assets_by_seg: Dict[int, str]) -> Dict:
+    seg_id = shot['seg_id']
+    local_assets = local_assets_by_seg.get(seg_id, "")
+    prompt_text = build_shot_prompt(shot, global_assets, local_assets)
+
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            temperature = 0.7 + (attempt - 1) * 0.1
+            result = call_deepseek(prompt_text, temperature=temperature, max_tokens=3000)
+            result = result.strip()
+            if result.startswith("```"):
+                result = re.sub(r'```\w*\n?', '', result).strip()
+
+            # 提取“- 提示词：”后面的内容
+            prompt_match = re.search(r'-\s*提示词：\s*(.*)', result, re.DOTALL)
+            if prompt_match:
+                candidate = prompt_match.group(1).strip()
+            else:
+                candidate = result
+
+            if has_repetition(candidate):
+                print(f"⚠️ 镜头 {shot['seg_id']}-{shot['shot_idx']} 第{attempt}次尝试检测到重复，重试...")
+                if attempt == max_retries:
+                    shot['_error'] = "重复字符异常（多次重试后仍失败）"
+                    shot['prompt'] = ""
+                    return shot
+                time.sleep(2)
+                continue
+
+            shot['prompt'] = candidate
+            shot['_error'] = None
+            return shot
+        except Exception as e:
+            print(f"❌ 镜头 {shot['seg_id']}-{shot['shot_idx']} 第{attempt}次尝试失败:")
+            traceback.print_exc()
+            if attempt == max_retries:
+                log_error('auto_split_simple', f'镜头{shot["seg_id"]}-{shot["shot_idx"]}生成失败', str(e))
+                shot['prompt'] = ""
+                shot['_error'] = str(e)
+                return shot
+            time.sleep(2)
+
+    return shot
+
+# ===================== 主函数 =====================
+def main():
+    parser = argparse.ArgumentParser(description="一键成片模式：生成英文视频提示词")
+    parser.add_argument("work_dir", help="工作目录")
+    args = parser.parse_args()
+    work_dir = args.work_dir
+
+    shots_path = os.path.join(work_dir, "shots.txt")
+    if not os.path.exists(shots_path):
+        print(f"错误：未找到 {shots_path}")
+        sys.exit(1)
+
+    # 读取并翻译全局资产
+    global_assets_en = translate_global_assets(work_dir)
+
+    # 读取所有段落局部资产（保持中文）
+    local_assets_by_seg = {}
+    for f in os.listdir(work_dir):
+        if f.startswith("assets_paragraph_") and f.endswith(".txt"):
+            seg_id_str = f.split('_')[2].split('.')[0]
+            try:
+                seg_id = int(seg_id_str)
+                local_assets_by_seg[seg_id] = read_asset_file(os.path.join(work_dir, f))
+            except ValueError:
+                continue
+
+    shots = parse_shots_file(shots_path)
+    if not shots:
+        print("错误：未解析到任何镜头")
+        sys.exit(1)
+
+    print(f"共解析到 {len(shots)} 个镜头，开始并发处理...")
+
+    items = [(shot, global_assets_en, local_assets_by_seg) for shot in shots]
+    results, errors = concurrent_utils.concurrent_process(
+        items,
+        lambda item, _: process_shot(item[0], item[1], item[2]),
+        max_workers=settings.MAX_WORKERS,
+        ordered=True,
+        progress_callback=lambda idx, res, success: print(f"镜头 {idx+1}/{len(shots)} 处理完成")
+    )
+
+    for i, res in enumerate(results):
+        if res is not None:
+            shots[i] = res
+
+    failed_shots = [s for s in shots if s.get('_error')]
+    if failed_shots:
+        print(f"\n⚠️ 共有 {len(failed_shots)} 个镜头生成失败（提示词为空），请稍后重试。")
+        for s in failed_shots[:5]:
+            print(f"  - 镜头 {s['seg_id']}-{s['shot_idx']}: {s['_error'][:100]}")
+        print("  详细错误请查看控制台输出的堆栈信息或 logs/error_log.txt。")
+    else:
+        print("所有镜头提示词生成成功！")
+
+    timestamp = datetime.now().strftime("%m%d_%H%M")
+    shot_data_file = os.path.join(work_dir, f"shot_data_{timestamp}.json")
+    with open(shot_data_file, 'w', encoding='utf-8') as f:
+        json.dump(shots, f, ensure_ascii=False, indent=2)
+    print(f"镜头结构化数据已保存至 {shot_data_file}")
+
+    def format_shot(shot):
+        prompt = shot.get('prompt', '')
+        if not prompt:
+            prompt = "[生成失败，请重试]"
+        return f"""【镜头{shot['seg_id']}-{shot['shot_idx']}：{shot['title']}】
+- 场景：{shot['scene']}
+- 角色：{', '.join(shot['roles'])}
+- 动作：{shot['action']}
+- 对白：{shot['dialogue']}
+- 视觉描述：{shot['visual']}
+- 时长：{shot['duration']:.1f}秒
+- 情绪基调：{shot['emotion']}
+- 地域：{shot['region']}
+- 提示词：
+{prompt}"""
+
+    readable_parts = [format_shot(shot) for shot in shots]
+    readable_file = os.path.join(work_dir, f"分镜结果_易读版_{timestamp}.txt")
+    with open(readable_file, 'w', encoding='utf-8') as f:
+        f.write('\n\n===========================\n\n'.join(readable_parts))
+    print(f"易读版分镜文件已生成：{readable_file}")
+
+    print("处理完成。")
+
+if __name__ == "__main__":
+    main()
+```
+
 ### core\comfyui_manager.py
 ```py
 """
@@ -3961,16 +4679,17 @@ from utils import config_manager
 from utils.error_logger import log_error
 
 class ComfyUIManager:
-    def __init__(self, api_url, output_base_dir, fps=24, max_duration=20):
+    def __init__(self, api_url, output_base_dir, fps=24, max_duration=20, on_shot_generated=None, auto_trim=False):
         self.api_url = api_url
         self.output_base_dir = output_base_dir
         self.fps = fps
         self.max_duration = max_duration
         self.log_callback = None
         self.config = self._load_workflow_config()
-        # 从 user_settings.json 加载重试参数
-        self.max_retries = config_manager.MAX_RETRIES   # 最大重试次数
-        self.retry_delay = config_manager.RETRY_DELAY   # 重试间隔秒数
+        self.max_retries = config_manager.MAX_RETRIES
+        self.retry_delay = config_manager.RETRY_DELAY
+        self.on_shot_generated = on_shot_generated
+        self.auto_trim = auto_trim
 
     def _load_workflow_config(self):
         config_path = os.path.join(os.path.dirname(__file__), '..', 'workflow_config.json')
@@ -4012,6 +4731,7 @@ class ComfyUIManager:
             if match:
                 shot_id = match.group(1)
                 title = match.group(2).rstrip('】)').strip()
+                print(f"解析到镜头: {shot_id}")   # 添加这一行
             else:
                 # 如果仍不匹配，尝试旧格式（严格中文括号）
                 match = re.match(r'【镜头(\d+-\d+)：([^】]+)】', line)
@@ -4032,6 +4752,7 @@ class ComfyUIManager:
 
             duration_match = re.search(r'时长[：:]\s*(\d+)', body)
             if not duration_match:
+                print(f"【错误】镜头 {shot_id} 未找到时长，body 内容前100字符: {body[:100]}")
                 continue
             duration = int(duration_match.group(1))
 
@@ -4117,6 +4838,18 @@ class ComfyUIManager:
         except Exception as e:
             self._log(f"下载过程中发生未知异常: {e}")
             log_error('comfyui_manager', f'下载未知异常 ({save_path})', str(e))
+            return False
+        
+    def _trim_video(self, input_path, output_path, target_duration):
+        """使用 ffmpeg 裁剪视频至目标时长（从开头取 target_duration 秒）"""
+        import subprocess
+        from utils.audio_utils import FFMPEG
+        cmd = [str(FFMPEG), '-y', '-i', input_path, '-t', str(target_duration), '-c', 'copy', '-avoid_negative_ts', 'make_zero', output_path]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True)
+            return True
+        except subprocess.CalledProcessError as e:
+            self._log(f"视频裁剪失败: {e.stderr}")
             return False
 
     def _generate_single_shot(self, shot, workflow_template, width, height, output_dir,
@@ -4228,6 +4961,20 @@ class ComfyUIManager:
                                 save_path = os.path.join(output_dir, f"镜头{shot_id}{ext}")
                                 if self.download_video(media_info, save_path):
                                     gen_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    # 自动裁剪（如果开启）
+                                    if self.auto_trim:
+                                        target_duration = shot.get('duration', 0)
+                                        if target_duration > 0:
+                                            base, ext2 = os.path.splitext(save_path)
+                                            trimmed_path = f"{base}_trimmed{ext2}"
+                                            if self._trim_video(save_path, trimmed_path, target_duration):
+                                                os.remove(save_path)
+                                                os.rename(trimmed_path, save_path)
+                                                self._log(f"镜头 {shot_id} 已裁剪至 {target_duration} 秒")
+                                            else:
+                                                self._log(f"镜头 {shot_id} 裁剪失败，保留原始视频")
+                                    if self.on_shot_generated:
+                                        self.on_shot_generated(shot_id)
                                     return True, shot_id, ext, gen_time
                                 else:
                                     return False, "下载失败", None, None
@@ -4248,6 +4995,20 @@ class ComfyUIManager:
                                     save_path = os.path.join(output_dir, f"镜头{shot_id}{ext}")
                                     if self.download_video(media_info, save_path):
                                         gen_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                        # 自动裁剪（如果开启）
+                                        if self.auto_trim:
+                                            target_duration = shot.get('duration', 0)
+                                            if target_duration > 0:
+                                                base, ext2 = os.path.splitext(save_path)
+                                                trimmed_path = f"{base}_trimmed{ext2}"
+                                                if self._trim_video(save_path, trimmed_path, target_duration):
+                                                    os.remove(save_path)
+                                                    os.rename(trimmed_path, save_path)
+                                                    self._log(f"镜头 {shot_id} 已裁剪至 {target_duration} 秒")
+                                                else:
+                                                    self._log(f"镜头 {shot_id} 裁剪失败，保留原始视频")
+                                        if self.on_shot_generated:
+                                            self.on_shot_generated(shot_id)
                                         return True, shot_id, ext, gen_time
                                     else:
                                         return False, "下载失败", None, None
@@ -4329,6 +5090,9 @@ class ComfyUIManager:
         failed_shots = []
         success_count = 0
 
+        service_fail_count = 0
+        MAX_SERVICE_FAIL = 5
+
         for idx, shot in enumerate(shots_to_generate):
             if edits and shot['id'] in edits:
                 shot = shot.copy()
@@ -4351,7 +5115,15 @@ class ComfyUIManager:
                     "time": gen_time
                 }
                 self._log(f"镜头 {shot['id']} 生成成功，进度：{success_count}/{total}")
+                service_fail_count = 0  # 成功一次，重置计数
             else:
+                # 检查是否是服务异常
+                if result and result.startswith("ComfyUI服务异常:"):
+                    service_fail_count += 1
+                    self._log(f"检测到服务异常 ({service_fail_count}/{MAX_SERVICE_FAIL})")
+                    if service_fail_count >= MAX_SERVICE_FAIL:
+                        self._log("连续多次服务异常，终止生成")
+                        return False, "ComfyUI服务异常: 连续多次连接失败，请检查服务是否运行"
                 failed_shots.append((shot, result))
                 self._log(f"镜头 {shot['id']} 初次生成失败: {result}")
 
@@ -4364,6 +5136,7 @@ class ComfyUIManager:
 
         # ---------- 第二阶段：重试 ----------
         self._log(f"\n===== 开始重试失败镜头，最大重试次数 {self.max_retries}，间隔 {self.retry_delay} 秒 =====\n")
+        retry_service_fail_count = 0
         for attempt in range(1, self.max_retries + 1):
             if not failed_shots:
                 break
@@ -4389,6 +5162,13 @@ class ComfyUIManager:
                     }
                 else:
                     self._log(f"镜头 {shot['id']} 重试失败: {result}")
+                    # 检查服务异常
+                    if result and result.startswith("ComfyUI服务异常:"):
+                        retry_service_fail_count += 1
+                        self._log(f"重试阶段检测到服务异常 ({retry_service_fail_count}/{MAX_SERVICE_FAIL})")
+                        if retry_service_fail_count >= MAX_SERVICE_FAIL:
+                            self._log("重试阶段连续多次服务异常，终止生成")
+                            return False, "ComfyUI服务异常: 连续多次连接失败，请检查服务是否运行"
                     next_failed.append((shot, result))
                 if attempt < self.max_retries:
                     time.sleep(self.retry_delay)
@@ -4406,60 +5186,6 @@ class ComfyUIManager:
             self._log(f"所有镜头生成成功，共 {success_count} 个")
             self._write_manifest(manifest, output_dir)
             return True, f"成功 {success_count}/{len(shots_to_generate)}"
-    def _append_video_info_to_readable(self, work_dir, manifest):
-        """将视频信息追加到易读版分镜文件中"""
-        import re
-        readable_file = self.get_latest_readable_file(work_dir)
-        if not readable_file:
-            self._log("未找到易读版分镜文件，无法追加视频信息。")
-            return
-
-        self._log(f"正在为易读版追加视频信息：{readable_file}")
-        with open(readable_file, 'r', encoding='utf-8') as f:
-            content = f.read()
-
-        blocks = re.split(r'\n\s*={5,}\s*\n', content.strip())
-
-        shot_info = {}
-        for item in manifest:
-            if item is None:
-                continue
-            shot_id = item['id']
-            shot_info[shot_id] = (item['file'], item['time'])
-
-        new_blocks = []
-        for block in blocks:
-            header_match = re.search(r'【镜头(\d+-\d+)：', block)
-            if header_match:
-                shot_id = header_match.group(1)
-                file_name, gen_time = shot_info.get(shot_id, (None, None))
-                lines = block.split('\n')
-                new_lines = []
-                inserted = False
-                for line in lines:
-                    new_lines.append(line)
-                    if not inserted and (line.startswith('- 提示词：') or line.startswith('- 分镜设计：')):
-                        if file_name:
-                            new_lines.append(f'- 视频文件：{file_name}')
-                        if gen_time:
-                            new_lines.append(f'- 生成时间：{gen_time}')
-                        inserted = True
-                if not inserted:
-                    if file_name:
-                        new_lines.append(f'- 视频文件：{file_name}')
-                    if gen_time:
-                        new_lines.append(f'- 生成时间：{gen_time}')
-                new_blocks.append('\n'.join(new_lines))
-            else:
-                new_blocks.append(block)
-
-        new_content = '\n===========================\n'.join(new_blocks)
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        final_readable = os.path.join(work_dir, f"分镜结果_易读版_最终_{timestamp}.txt")
-        with open(final_readable, 'w', encoding='utf-8') as f:
-            f.write(new_content)
-        self._log(f"最终易读版已生成：{final_readable}")
 
     def _write_manifest(self, manifest, output_dir):
         """写入 FFmpeg 合并列表（不再生成镜头清单）"""
@@ -4471,6 +5197,45 @@ class ComfyUIManager:
             for item in success_items:
                 f.write(f"file '{item['file']}'\n")
         self._log(f"FFmpeg 合并列表已保存至: {concat_path}")
+        # 写入视频清单
+        manifest_path = os.path.join(output_dir, "video_manifest.json")
+        with open(manifest_path, 'w', encoding='utf-8') as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=2)
+```
+
+### core\comfyui_manager_simple.py
+```py
+# core/comfyui_manager_simple.py
+"""
+一键成片专用视频生成器，封装 ComfyUIManager 并启用自动裁剪。
+"""
+
+from .comfyui_manager import ComfyUIManager
+
+class SimpleVideoGenerator:
+    def __init__(self, api_url, output_base_dir, fps=24, max_duration=20, on_shot_generated=None):
+        """
+        初始化视频生成器，自动启用 auto_trim=True。
+        """
+        self.manager = ComfyUIManager(
+            api_url=api_url,
+            output_base_dir=output_base_dir,
+            fps=fps,
+            max_duration=max_duration,
+            on_shot_generated=on_shot_generated,
+            auto_trim=True
+        )
+        self.log_callback = None
+
+    def set_log_callback(self, callback):
+        """设置日志回调"""
+        self.manager.set_log_callback(callback)
+
+    def run(self, story_title, work_dir, resolution, template_path, selected_shots=None, edits=None):
+        """
+        生成视频，参数与 ComfyUIManager.run 相同。
+        """
+        return self.manager.run(story_title, work_dir, resolution, template_path, selected_shots, edits)
 ```
 
 ### core\extract_prompts.py
@@ -4891,17 +5656,31 @@ def main():
     # 写入最终文件
     write_shots(output_shots, updated_shots)
     # 生成 shot_subtitle_map.json
-    work_dir = os.path.dirname(output_shots)  # 获取工作目录
+    work_dir = os.path.dirname(output_shots)
     map_path = os.path.join(work_dir, 'shot_subtitle_map.json')
+    
+    # 读取镜头真实时间文件（如果存在）
+    shot_times_path = os.path.join(work_dir, 'shot_times.json')
+    shot_times = []
+    if os.path.exists(shot_times_path):
+        with open(shot_times_path, 'r', encoding='utf-8') as f:
+            shot_times = json.load(f)
+        if len(shot_times) != len(updated_shots):
+            print(f"警告：镜头时间文件数量({len(shot_times)})与镜头数量({len(updated_shots)})不一致，将使用0")
+            shot_times = []
+    
     shot_map = []
-    for shot in updated_shots:
-        # 注意：updated_shots 中需要包含 start_ms, end_ms 时间信息
-        # 如果当前没有这些字段，需要从其他来源获取（见下文说明）
+    for idx, shot in enumerate(updated_shots):
+        start_ms = 0
+        end_ms = 0
+        if shot_times and idx < len(shot_times):
+            start_ms = shot_times[idx].get('start_ms', 0)
+            end_ms = shot_times[idx].get('end_ms', 0)
         shot_map.append({
-            "shot_id": shot['id'],  # 此时 shot['id'] 已是正确的 "段落-镜头" 格式，如 "1-1"、"2-1" 等[3]
-            "start_ms": shot.get('start_ms', 0),  # 需要确保有这个字段
-            "end_ms": shot.get('end_ms', 0),      # 需要确保有这个字段
-            "target_duration_ms": int(shot['duration'] * 1000)  # duration 字段已有
+            "shot_id": shot['id'],
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+            "target_duration_ms": int(shot['duration'] * 1000)
         })
     with open(map_path, 'w', encoding='utf-8') as f:
         json.dump(shot_map, f, ensure_ascii=False, indent=2)
@@ -5602,29 +6381,56 @@ def clean_text(t):
     """清洗文本：去除标点、空格、换行，只保留中文、字母、数字"""
     return re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9]', '', t)
 
-def merge_short_subs(subs, min_len=10):
-    """合并连续短字幕（文本长度<min_len），返回新的字幕列表"""
+def merge_short_subs(subs, min_len=5):
+    """
+    强制将长度小于 min_len 的字幕向下合并到下一个字幕。
+    如果已经是最后一条，则合并到前一条。
+    返回新的字幕列表，每条字幕的时间范围合并，文本合并（若目标已包含则不去重）。
+    """
     if not subs:
         return []
-    merged = []
-    current_group = []
-    for start, end, text in subs:
-        if len(text) < min_len:
-            current_group.append((start, end, text))
+    new_subs = []
+    i = 0
+    while i < len(subs):
+        current = subs[i]
+        # 如果当前字幕长度足够，直接加入
+        if len(current[2]) >= min_len:
+            new_subs.append(current)
+            i += 1
+            continue
+        
+        # 当前字幕过短，需要合并
+        # 优先尝试向下合并
+        if i + 1 < len(subs):
+            next_sub = subs[i+1]
+            # 合并时间范围
+            merged_start = current[0]
+            merged_end = next_sub[1]
+            # 合并文本：如果当前文本已经在下一个文本中，则不再重复添加
+            if current[2] in next_sub[2]:
+                merged_text = next_sub[2]
+            else:
+                merged_text = current[2] + " " + next_sub[2]
+            merged = (merged_start, merged_end, merged_text)
+            # 将合并后的字幕加入新列表，并跳过下一个（i+2）
+            new_subs.append(merged)
+            i += 2
         else:
-            if current_group:
-                merged_start = current_group[0][0]
-                merged_end = current_group[-1][1]
-                merged_text = ' '.join(t for _, _, t in current_group)
-                merged.append((merged_start, merged_end, merged_text))
-                current_group = []
-            merged.append((start, end, text))
-    if current_group:
-        merged_start = current_group[0][0]
-        merged_end = current_group[-1][1]
-        merged_text = ' '.join(t for _, _, t in current_group)
-        merged.append((merged_start, merged_end, merged_text))
-    return merged
+            # 最后一条且短，合并到前一个（如果新列表中有）
+            if new_subs:
+                prev = new_subs[-1]
+                merged_start = prev[0]
+                merged_end = current[1]
+                if current[2] in prev[2]:
+                    merged_text = prev[2]
+                else:
+                    merged_text = prev[2] + " " + current[2]
+                new_subs[-1] = (merged_start, merged_end, merged_text)
+            else:
+                # 只有一条且短，保留
+                new_subs.append(current)
+            i += 1
+    return new_subs
 
 def find_longest_match(a, b):
     """
@@ -5954,6 +6760,18 @@ def main(work_dir):
     with open(map_path, 'w', encoding='utf-8') as f:
         json.dump(mapping, f, ensure_ascii=False, indent=2)
     log_print(f"镜头段落映射已保存至 {map_path}")
+
+    # 生成镜头真实时间文件（供后续填充 start_ms / end_ms）
+    shot_times_path = os.path.join(work_dir, 'shot_times.json')
+    shot_times_list = []
+    for shot in all_shots:
+        shot_times_list.append({
+            "start_ms": shot['start_ms'],
+            "end_ms": shot['end_ms']
+        })
+    with open(shot_times_path, 'w', encoding='utf-8') as f:
+        json.dump(shot_times_list, f, ensure_ascii=False, indent=2)
+    log_print(f"镜头时间文件已保存至 {shot_times_path}")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -6505,7 +7323,7 @@ class AudioGenerationController:
                     self.status[idx]['status'] = 'success'
                     self.status[idx]['audio_path'] = audio_path
                     self.status[idx]['duration'] = duration
-                    self.log(f"片段 {idx} 生成成功，时长 {duration:.2f}s")
+                    # self.log(f"片段 {idx} 生成成功，时长 {duration:.2f}s")
                     # 保存状态到文件
                     self._save_status()
                     cb(idx, True, audio_path, duration)
@@ -8910,6 +9728,8 @@ import tkinter as tk
 from tkinter import ttk
 import os
 import json
+import glob
+import re
 from datetime import datetime
 from utils import config_manager
 
@@ -8928,6 +9748,64 @@ class SimpleMode:
         
         self.create_ui()
         self.frame.pack(fill='both', expand=True)
+        self.current_video_dir = None   # 当前视频生成目录
+
+    def _parse_shots_to_scenes(self, shots_path):
+        """解析 shots.txt 为 scenes 列表"""
+        import re
+        with open(shots_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        blocks = re.split(r'\n\s*={5,}\s*\n', content.strip())
+        scenes_dict = {}
+        for block in blocks:
+            if not block.strip():
+                continue
+            header_match = re.search(r'【镜头(\d+)-(\d+)：([^】]*)】', block)
+            if not header_match:
+                continue
+            scene_id = int(header_match.group(1))
+            shot_id = int(header_match.group(2))
+            title = header_match.group(3).strip()
+            shot = {
+                'title': title,
+                'scene': '',
+                'roles': [],
+                'action': '',
+                'dialogue': '',
+                'visual': '',
+                'duration': 10.0,
+                'emotion': '',
+                'region': '全球·无明确时代'
+            }
+            lines = block.split('\n')
+            for line in lines:
+                line = line.strip()
+                if line.startswith('- 场景：'):
+                    shot['scene'] = line.split('：', 1)[-1].strip()
+                elif line.startswith('- 角色：'):
+                    roles_str = line.split('：', 1)[-1].strip()
+                    shot['roles'] = [r.strip() for r in roles_str.split(',')]
+                elif line.startswith('- 动作：'):
+                    shot['action'] = line.split('：', 1)[-1].strip()
+                elif line.startswith('- 对白：'):
+                    shot['dialogue'] = line.split('：', 1)[-1].strip()
+                elif line.startswith('- 视觉描述：'):
+                    shot['visual'] = line.split('：', 1)[-1].strip()
+                elif line.startswith('- 时长：'):
+                    dur_str = line.split('：', 1)[-1].strip()
+                    try:
+                        shot['duration'] = float(dur_str.replace('秒', ''))
+                    except:
+                        pass
+                elif line.startswith('- 情绪基调：'):
+                    shot['emotion'] = line.split('：', 1)[-1].strip()
+                elif line.startswith('- 地域：'):
+                    shot['region'] = line.split('：', 1)[-1].strip()
+            if scene_id not in scenes_dict:
+                scenes_dict[scene_id] = {'id': scene_id, 'title': f"场次{scene_id}", 'shots': []}
+            scenes_dict[scene_id]['shots'].append(shot)
+        scenes = [scenes_dict[k] for k in sorted(scenes_dict.keys())]
+        return scenes
 
     def load_project(self, folder):
         """从历史项目目录加载数据"""
@@ -8948,26 +9826,71 @@ class SimpleMode:
             with open(metadata_path, 'r', encoding='utf-8') as f:
                 self.data.metadata = json.load(f)
 
-        # 加载 shots.txt（如果有）
+        # 加载剧本（shots.txt）
         shots_path = os.path.join(folder, "shots.txt")
         if os.path.exists(shots_path):
-            with open(shots_path, 'r', encoding='utf-8') as f:
-                shots_content = f.read()
-            # 可以解析并显示到剧本标签页，暂时先直接显示文本
-            self.script_tab.display_raw_text(shots_content)
+            scenes = self._parse_shots_to_scenes(shots_path)
+            if scenes:
+                self.script_tab.update_script_data(scenes)
+            else:
+                # 解析失败，显示原始内容
+                with open(shots_path, 'r', encoding='utf-8') as f:
+                    shots_content = f.read()
+                self.script_tab.display_raw_text(shots_content)
+        else:
+            self.script_tab.tree.delete(*self.script_tab.tree.get_children())
+            self.script_tab.tree.insert('', 'end', values=('', '', '未找到 shots.txt', '请先生成剧本'))
 
-        # 加载资产库（如果有）
-        assets_path = os.path.join(folder, "assets.json")
-        if os.path.exists(assets_path):
-            with open(assets_path, 'r', encoding='utf-8') as f:
-                assets = json.load(f)
-                self.data.assets = assets
-                self.assets_tab.update_assets(assets)
+        # 加载资产库（纯文本文件）
+        if hasattr(self, 'assets_tab'):
+            self.assets_tab.work_dir = folder
+            self.assets_tab.refresh_file_list()
 
-        # 启用相应按钮（根据已存在的数据决定）
-        # 这里简单启用所有按钮，但实际应根据数据完整性判断
-        self.set_button_state('normal', 'normal', 'normal', 'disabled')
+        # 启用相应按钮
+        self.set_button_state('normal', 'disabled', 'disabled', 'disabled')  # 生成剧本后，提示词按钮保持禁用，直到资产就绪（但资产已自动生成）
+
+        # 如果资产库文件存在（即已生成剧本），启用生成提示词按钮
+        global_assets = os.path.join(folder, "assets_global.txt")
+        para_assets = glob.glob(os.path.join(folder, "assets_paragraph_*.txt"))
+        if os.path.exists(global_assets) and para_assets:
+            self.gen_prompts_btn.config(state='normal')
+
+        # 尝试加载历史提示词
+        pattern = os.path.join(folder, "分镜结果_易读版_*.txt")
+        readable_files = glob.glob(pattern)
+        if readable_files:
+            latest = max(readable_files, key=os.path.getmtime)
+            try:
+                with open(latest, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                blocks = re.split(r'\n\s*={5,}\s*\n', content.strip())
+                prompts = []
+                for block in blocks:
+                    if not block.strip():
+                        continue
+                    idx = block.find('- 提示词：')
+                    if idx != -1:
+                        prompt_text = block[idx + len('- 提示词：'):].strip()
+                        prompts.append(prompt_text)
+                    else:
+                        prompts.append("[未找到提示词]")
+                self.data.prompts = prompts
+                self.prompts_tab.display_prompts(prompts)
+                self.app.log(f"已加载历史提示词（共 {len(prompts)} 个镜头）")
+                # 启用生成提示词按钮（允许重新生成）
+                self.gen_prompts_btn.config(state='normal')
+                # 启用确认按钮
+                self.gen_video_btn.config(state='normal')
+            except Exception as e:
+                self.app.log(f"加载历史提示词失败: {e}")
+        else:
+            self.app.log("未找到历史提示词文件，请点击「生成提示词」")
+
         self.app.log(f"已加载历史项目: {folder}")
+                
+        # 刷新视频面板
+        if hasattr(self, 'video_tab'):
+            self.video_tab.set_work_dir(folder)
     
     def create_ui(self):
         # 顶部：标题输入和高级向导
@@ -8978,7 +9901,7 @@ class SimpleMode:
         self.title_entry = tk.Entry(top_frame, width=30)
         self.title_entry.pack(side='left', padx=5)
         
-        self.wizard_btn = tk.Button(top_frame, text="高级向导", command=self.controller.open_wizard)
+        self.wizard_btn = tk.Button(top_frame, text="故事创作向导", command=self.controller.open_wizard)
         self.wizard_btn.pack(side='left', padx=5)
         
         # 标签页
@@ -9004,6 +9927,11 @@ class SimpleMode:
         from gui.simple.prompts_tab import PromptsTab
         self.prompts_tab = PromptsTab(self.notebook, self.controller)
         self.notebook.add(self.prompts_tab.frame, text="提示词")
+
+        # 视频标签页（新增）
+        from gui.simple.video_tab import VideoTab
+        self.video_tab = VideoTab(self.notebook, self.controller, self.app)
+        self.notebook.add(self.video_tab.frame, text="视频")
         
         # 底部按钮栏
         btn_frame = tk.Frame(self.frame)
@@ -9012,14 +9940,14 @@ class SimpleMode:
         self.gen_script_btn = tk.Button(btn_frame, text="1. 生成剧本", command=self.controller.generate_script, width=15)
         self.gen_script_btn.pack(side='left', padx=2)
         
-        self.extract_assets_btn = tk.Button(btn_frame, text="2. 提取资产", command=self.controller.extract_assets, width=15, state='disabled')
-        self.extract_assets_btn.pack(side='left', padx=2)
-        
-        self.gen_prompts_btn = tk.Button(btn_frame, text="3. 生成提示词", command=self.controller.generate_prompts, width=15, state='disabled')
+        self.gen_prompts_btn = tk.Button(btn_frame, text="2. 生成提示词", command=self.controller.generate_prompts, width=15, state='disabled')
         self.gen_prompts_btn.pack(side='left', padx=2)
         
-        self.confirm_btn = tk.Button(btn_frame, text="✅ 确认并生成视频", command=self.controller.confirm_and_generate, width=20, state='disabled')
-        self.confirm_btn.pack(side='left', padx=2)
+        self.gen_video_btn = tk.Button(btn_frame, text="3. 生成视频", command=self.controller.confirm_and_generate, width=20, state='disabled')
+        self.gen_video_btn.pack(side='left', padx=2)
+
+        self.merge_video_btn = tk.Button(btn_frame, text="4. 合并视频", command=self.controller.merge_videos, width=15, state='disabled')
+        self.merge_video_btn.pack(side='left', padx=2)
         
         # 倒计时标签（原有，用于显示倒计时）
         self.countdown_label = tk.Label(self.frame, text="", font=('Arial', 16, 'bold'), fg='red')
@@ -9027,11 +9955,11 @@ class SimpleMode:
         self.countdown_label.pack_forget()
     
     # 以下方法供控制器调用，用于更新 UI 状态
-    def set_button_state(self, gen_script_state, extract_assets_state, gen_prompts_state, confirm_state):
+    def set_button_state(self, gen_script_state, gen_prompts_state, gen_video_state, merge_state):
         self.gen_script_btn.config(state=gen_script_state)
-        self.extract_assets_btn.config(state=extract_assets_state)
         self.gen_prompts_btn.config(state=gen_prompts_state)
-        self.confirm_btn.config(state=confirm_state)
+        self.gen_video_btn.config(state=gen_video_state)
+        self.merge_video_btn.config(state=merge_state)
     
     def show_countdown(self, seconds):
         self.countdown_label.config(text=f"⏳ {seconds}秒后自动运行工作流，点击「选择或编辑提示词」可暂停")
@@ -9164,6 +10092,150 @@ class StandardMode:
         else:
             self.resolution_combo['values'] = []
             self.resolution_var.set("")
+```
+
+### gui\standard_video_panel.py
+```py
+# gui/standard_video_panel.py
+import tkinter as tk
+from tkinter import ttk, messagebox
+import os
+import glob
+import re
+
+class StandardVideoPanel:
+    def __init__(self, parent, app):
+        self.app = app
+        self.frame = tk.Frame(parent)
+        self.work_dir = None
+        self.video_dir = None
+        self.shots = []
+
+        # 表格
+        columns = ('shot_id', 'description', 'status')
+        self.tree = ttk.Treeview(self.frame, columns=columns, show='headings', height=15)
+        self.tree.heading('shot_id', text='镜号')
+        self.tree.heading('description', text='镜头描述')
+        self.tree.heading('status', text='状态')
+        self.tree.column('shot_id', width=80, anchor='center')
+        self.tree.column('description', width=400)
+        self.tree.column('status', width=80, anchor='center')
+
+        scrollbar = ttk.Scrollbar(self.frame, orient='vertical', command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+
+        self.tree.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+
+        # 按钮区域
+        btn_frame = tk.Frame(self.frame)
+        btn_frame.pack(fill='x', pady=5)
+
+        self.preview_btn = tk.Button(btn_frame, text="预览", command=self.preview_shot, state='disabled')
+        self.preview_btn.pack(side='left', padx=2)
+
+        self.retake_btn = tk.Button(btn_frame, text="重试", command=self.retake_shot, state='disabled')
+        self.retake_btn.pack(side='left', padx=2)
+
+        self.refresh_btn = tk.Button(btn_frame, text="刷新", command=self.refresh)
+        self.refresh_btn.pack(side='left', padx=2)
+
+        self.tree.bind('<<TreeviewSelect>>', self.on_select)
+
+        # 注册视频生成回调
+        if hasattr(app, 'register_video_generation_callback'):
+            app.register_video_generation_callback(self.on_video_generated)
+
+    def set_work_dir(self, work_dir):
+        self.work_dir = work_dir
+        self.video_dir = os.path.join(work_dir, "视频")
+        self.refresh()
+
+    def refresh(self):
+        """刷新视频列表"""
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        if not self.work_dir or not os.path.isdir(self.video_dir):
+            self.tree.insert('', 'end', values=('', '未找到视频文件夹', ''))
+            return
+
+        # 获取镜头信息（优先从 app.shots_info）
+        shots_info = self.app.shots_info
+        if not shots_info:
+            # 降级：从易读版分镜文件读取
+            pattern = os.path.join(self.work_dir, "分镜结果_易读版_*.txt")
+            files = glob.glob(pattern)
+            if files:
+                readable_file = max(files, key=os.path.getmtime)
+                from core.comfyui_manager import ComfyUIManager
+                temp_manager = ComfyUIManager("", "")
+                shots_info = temp_manager.get_shots_info(readable_file)
+
+        if not shots_info:
+            self.tree.insert('', 'end', values=('', '未找到镜头信息', ''))
+            return
+
+        # 扫描视频文件
+        video_files = {}
+        for f in os.listdir(self.video_dir):
+            if f.startswith("镜头") and (f.endswith(".mp4") or f.endswith(".gif")):
+                shot_id = f[2:].rsplit('.', 1)[0]
+                video_files[shot_id] = os.path.join(self.video_dir, f)
+
+        self.shots = []
+        for shot in shots_info:
+            shot_id = shot['id']
+            description = shot.get('visual', '')[:60]  # 使用视觉描述
+            video_path = video_files.get(shot_id)
+            status = "已生成" if video_path else "待生成"
+            self.shots.append({
+                'id': shot_id,
+                'description': description,
+                'video_path': video_path,
+                'status': status
+            })
+            self.tree.insert('', 'end', values=(shot_id, description, status))
+
+    def on_select(self, event):
+        selection = self.tree.selection()
+        if selection:
+            self.preview_btn.config(state='normal')
+            self.retake_btn.config(state='normal')
+        else:
+            self.preview_btn.config(state='disabled')
+            self.retake_btn.config(state='disabled')
+
+    def preview_shot(self):
+        selection = self.tree.selection()
+        if not selection:
+            return
+        index = self.tree.index(selection[0])
+        if index >= len(self.shots):
+            return
+        shot = self.shots[index]
+        if shot['video_path'] and os.path.exists(shot['video_path']):
+            os.startfile(shot['video_path'])
+        else:
+            messagebox.showwarning("提示", f"镜头 {shot['id']} 未找到视频文件")
+
+    def retake_shot(self):
+        selection = self.tree.selection()
+        if not selection:
+            return
+        index = self.tree.index(selection[0])
+        if index >= len(self.shots):
+            return
+        shot = self.shots[index]
+        if hasattr(self.app, 'retake_single_shot'):
+            self.app.retake_single_shot(shot['id'])
+        else:
+            messagebox.showwarning("提示", "重试功能未实现")
+
+    def on_video_generated(self, shot_id):
+        if hasattr(self, '_refresh_after_id'):
+            self.frame.after_cancel(self._refresh_after_id)
+        self._refresh_after_id = self.frame.after(500, self.refresh)
 ```
 
 ### gui\step_manager.py
@@ -9687,6 +10759,7 @@ class StoryWizard:
     - 开篇要有引人入胜的引子，结尾要有回味。
     - 语言生动，适合视频旁白。
     - 全文约{self.answers.get("目标时长")}的朗读量（约每分钟200字）。
+    - 严格按照目标时长控制故事篇幅，不要过短或过长。
     """
 
         # 构造 metadata 字典
@@ -10435,69 +11508,163 @@ class SegmentListPanel(ttk.Frame):
 ### gui\simple\assets_tab.py
 ```py
 # gui/simple/assets_tab.py
+import os
 import tkinter as tk
-from tkinter import ttk, scrolledtext
+from tkinter import ttk, scrolledtext, messagebox
 
 class AssetsTab:
     def __init__(self, parent, controller):
         self.controller = controller
         self.frame = tk.Frame(parent)
-        
-        # 使用 PanedWindow 实现可调整大小
-        self.paned = ttk.PanedWindow(self.frame, orient=tk.VERTICAL)
+
+        # 获取工作目录（通过 controller 或 app）
+        self.work_dir = None
+        self.current_file = None  # 当前选中的文件路径
+        self.file_listbox = None
+        self.text_edit = None
+
+        # 左右分栏
+        self.paned = ttk.PanedWindow(self.frame, orient=tk.HORIZONTAL)
         self.paned.pack(fill='both', expand=True, padx=5, pady=5)
-        
-        # 人物设定区域
-        persona_frame = ttk.LabelFrame(self.paned, text="人物设定")
-        self.paned.add(persona_frame, weight=1)
-        self.persona_text = scrolledtext.ScrolledText(persona_frame, wrap='word', height=5)
-        self.persona_text.pack(fill='both', expand=True, padx=5, pady=5)
-        
-        # 场景设定区域
-        scene_frame = ttk.LabelFrame(self.paned, text="场景设定")
-        self.paned.add(scene_frame, weight=1)
-        self.scene_text = scrolledtext.ScrolledText(scene_frame, wrap='word', height=5)
-        self.scene_text.pack(fill='both', expand=True, padx=5, pady=5)
-        
-        # 视觉风格区域
-        style_frame = ttk.LabelFrame(self.paned, text="视觉风格")
-        self.paned.add(style_frame, weight=1)
-        self.style_text = scrolledtext.ScrolledText(style_frame, wrap='word', height=5)
-        self.style_text.pack(fill='both', expand=True, padx=5, pady=5)
-        
-        # 初始禁用编辑，提取资产后启用（或保持可编辑）
-        self.persona_text.config(state='normal')
-        self.scene_text.config(state='normal')
-        self.style_text.config(state='normal')
-        
-        # 绑定文本变化事件，实时更新数据模型
-        self.persona_text.bind('<<Modified>>', self.on_persona_changed)
-        self.scene_text.bind('<<Modified>>', self.on_scene_changed)
-        self.style_text.bind('<<Modified>>', self.on_style_changed)
-    
+
+        # 左侧：文件列表
+        left_frame = ttk.Frame(self.paned, width=200)
+        self.paned.add(left_frame, weight=1)
+        ttk.Label(left_frame, text="资产文件", font=('微软雅黑', 10, 'bold')).pack(anchor='w', padx=5, pady=2)
+        self.file_listbox = tk.Listbox(left_frame, height=20)
+        self.file_listbox.pack(fill='both', expand=True, padx=5, pady=2)
+        self.file_listbox.bind('<<ListboxSelect>>', self.on_file_selected)
+
+        # 右侧：编辑区域
+        right_frame = ttk.Frame(self.paned)
+        self.paned.add(right_frame, weight=3)
+        self.text_edit = scrolledtext.ScrolledText(right_frame, wrap='word', font=('微软雅黑', 10))
+        self.text_edit.pack(fill='both', expand=True, padx=5, pady=5)
+
+        # 保存按钮
+        btn_frame = tk.Frame(right_frame)
+        btn_frame.pack(fill='x', padx=5, pady=5)
+        self.save_btn = tk.Button(btn_frame, text="保存当前资产", command=self.save_current_asset, state='disabled')
+        self.save_btn.pack(side='right', padx=5)
+
+        # 刷新按钮
+        self.refresh_btn = tk.Button(btn_frame, text="刷新列表", command=self.refresh_file_list)
+        self.refresh_btn.pack(side='right', padx=5)
+
+    def update_assets(self, assets=None):
+        """刷新资产文件列表（assets参数已废弃）"""
+        # 尝试获取 work_dir
+        if hasattr(self.controller, 'ui') and hasattr(self.controller.ui, 'work_dir'):
+            self.work_dir = self.controller.ui.work_dir
+        elif hasattr(self.controller, 'app') and hasattr(self.controller.app, 'work_dir'):
+            self.work_dir = self.controller.app.work_dir
+        elif hasattr(self.controller, 'data') and hasattr(self.controller.data, 'work_dir'):
+            self.work_dir = self.controller.data.work_dir
+        self.refresh_file_list()
+
+    def refresh_file_list(self):
+        """刷新左侧文件列表"""
+        if not self.work_dir or not os.path.isdir(self.work_dir):
+            self.file_listbox.delete(0, tk.END)
+            self.file_listbox.insert(tk.END, "未打开项目")
+            self.text_edit.delete('1.0', 'end')
+            self.text_edit.insert('1.0', "请先打开一个项目")
+            self.save_btn.config(state='disabled')
+            return
+
+        self.file_listbox.delete(0, tk.END)
+        # 列出所有资产文件
+        files = []
+        # 全局资产
+        global_path = os.path.join(self.work_dir, "assets_global.txt")
+        if os.path.exists(global_path):
+            files.append(("全局资产库", global_path))
+        # 段落局部资产
+        para_files = []
+        for f in os.listdir(self.work_dir):
+            if f.startswith("assets_paragraph_") and f.endswith(".txt"):
+                para_files.append(f)
+        para_files.sort(key=lambda x: int(x.split('_')[2].split('.')[0]))
+        for f in para_files:
+            files.append((f.replace("assets_paragraph_", "段落 ").replace(".txt", ""), os.path.join(self.work_dir, f)))
+
+        if not files:
+            self.file_listbox.insert(tk.END, "无资产文件")
+            self.text_edit.delete('1.0', 'end')
+            self.text_edit.insert('1.0', "未找到资产文件，请先生成剧本")
+            self.save_btn.config(state='disabled')
+            return
+
+        for name, path in files:
+            self.file_listbox.insert(tk.END, name)
+            # 存储路径到 listbox 的 item 中（使用字典映射）
+            if not hasattr(self, '_file_map'):
+                self._file_map = {}
+            self._file_map[name] = path
+
+    def on_file_selected(self, event):
+        """当选中文件时，加载内容到右侧编辑器"""
+        selection = self.file_listbox.curselection()
+        if not selection:
+            return
+        name = self.file_listbox.get(selection[0])
+        if name == "未打开项目" or name == "无资产文件":
+            self.text_edit.delete('1.0', 'end')
+            self.text_edit.insert('1.0', "请先打开一个项目" if name == "未打开项目" else "未找到资产文件，请先生成剧本")
+            self.save_btn.config(state='disabled')
+            return
+
+        if hasattr(self, '_file_map') and name in self._file_map:
+            filepath = self._file_map[name]
+        else:
+            # 兼容旧方式：直接构造路径（不推荐）
+            if name == "全局资产库":
+                filepath = os.path.join(self.work_dir, "assets_global.txt")
+            elif name.startswith("段落 "):
+                idx = name.split(" ")[1]
+                filepath = os.path.join(self.work_dir, f"assets_paragraph_{idx}.txt")
+            else:
+                return
+
+        if not os.path.exists(filepath):
+            self.text_edit.delete('1.0', 'end')
+            self.text_edit.insert('1.0', f"文件不存在：{filepath}")
+            self.save_btn.config(state='disabled')
+            return
+
+        self.current_file = filepath
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+            self.text_edit.delete('1.0', 'end')
+            self.text_edit.insert('1.0', content)
+            self.save_btn.config(state='normal')
+        except Exception as e:
+            messagebox.showerror("错误", f"读取文件失败：{e}")
+            self.save_btn.config(state='disabled')
+
+    def save_current_asset(self):
+        """保存当前编辑的内容到文件"""
+        if not self.current_file:
+            messagebox.showwarning("提示", "未选中任何资产文件")
+            return
+        content = self.text_edit.get('1.0', 'end-1c')
+        try:
+            with open(self.current_file, 'w', encoding='utf-8') as f:
+                f.write(content)
+            messagebox.showinfo("成功", f"已保存：{os.path.basename(self.current_file)}")
+        except Exception as e:
+            messagebox.showerror("错误", f"保存失败：{e}")
+
+    # 保留原有的兼容方法（如果其他地方调用）
     def on_persona_changed(self, event=None):
-        self.persona_text.edit_modified(False)
-        content = self.persona_text.get('1.0', 'end-1c')
-        self.controller.on_assets_changed('persona', content)
-    
+        pass
+
     def on_scene_changed(self, event=None):
-        self.scene_text.edit_modified(False)
-        content = self.scene_text.get('1.0', 'end-1c')
-        self.controller.on_assets_changed('scene', content)
-    
+        pass
+
     def on_style_changed(self, event=None):
-        self.style_text.edit_modified(False)
-        content = self.style_text.get('1.0', 'end-1c')
-        self.controller.on_assets_changed('style', content)
-    
-    def update_assets(self, assets):
-        """由控制器调用，更新资产显示"""
-        self.persona_text.delete('1.0', 'end')
-        self.persona_text.insert('1.0', assets.get('persona', ''))
-        self.scene_text.delete('1.0', 'end')
-        self.scene_text.insert('1.0', assets.get('scene', ''))
-        self.style_text.delete('1.0', 'end')
-        self.style_text.insert('1.0', assets.get('style', ''))
+        pass
 ```
 
 ### gui\simple\controller.py
@@ -10509,8 +11676,12 @@ import re
 import tkinter as tk
 from tkinter import messagebox
 import json
+import subprocess
+import sys
+import glob
 from datetime import datetime
 from utils import config_manager
+from core import comfyui_manager
 
 class SimpleModeController:
     def __init__(self, ui, data, app):
@@ -10549,6 +11720,81 @@ class SimpleModeController:
             self.app.log(f"项目已保存至: {work_dir}")
         StoryWizard(self.app.root, self.app, on_finish)
 
+    def _run_auto_split(self, work_dir):
+        # 从当前文件向上三级到项目根目录
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        script_path = os.path.join(project_root, "core", "auto_split_simple.py")
+
+        # 检查脚本是否存在
+        if not os.path.exists(script_path):
+            raise FileNotFoundError(f"未找到脚本文件: {script_path}")
+
+        # 检查必需文件是否存在
+        global_assets = os.path.join(work_dir, "assets_global.txt")
+        if not os.path.exists(global_assets):
+            raise FileNotFoundError("缺少全局资产文件，请先生成剧本")
+        para_assets = glob.glob(os.path.join(work_dir, "assets_paragraph_*.txt"))
+        if not para_assets:
+            raise FileNotFoundError("缺少段落资产文件，请先生成剧本")
+        
+        cmd = [sys.executable, script_path, work_dir]
+        self.app.log("正在生成视频提示词，请稍候...")
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,      # 捕获错误输出
+                text=True,
+                bufsize=1,
+                encoding='utf-8',
+                errors='replace'
+            )
+            # 实时输出 stdout
+            for line in process.stdout:
+                line = line.strip()
+                if line:
+                    self.app.log(line)
+            # 等待进程结束
+            stdout, stderr = process.communicate()
+            if process.returncode != 0:
+                self.app.log(f"脚本执行失败，返回码 {process.returncode}")
+                if stderr:
+                    self.app.log(f"错误详情:\n{stderr}")
+                raise Exception(f"脚本执行失败，返回码 {process.returncode}")
+        except Exception as e:
+            self.app.log(f"生成提示词失败: {e}")
+            raise
+
+        # 查找最新生成的易读版分镜文件
+        pattern = os.path.join(work_dir, "分镜结果_易读版_*.txt")
+        files = glob.glob(pattern)
+        if not files:
+            raise FileNotFoundError("未找到生成的易读版分镜文件")
+        latest = max(files, key=os.path.getmtime)
+        return latest
+
+    def _parse_prompts_from_readable(self, readable_path):
+        """从易读版分镜文件中提取每个镜头的提示词，返回列表"""
+        with open(readable_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        # 按等号线分割成镜头块
+        blocks = re.split(r'\n\s*={5,}\s*\n', content.strip())
+        prompts = []
+        for block in blocks:
+            if not block.strip():
+                continue
+            # 查找“- 提示词：”的位置
+            idx = block.find('- 提示词：')
+            if idx != -1:
+                # 从该行之后开始提取
+                after_prompt = block[idx + len('- 提示词：'):].lstrip()
+                # 提示词是最后一个字段，后面没有其他“- ”行，直接取到块结束
+                # 但可能有多余空行，去除首尾空白
+                prompt_text = after_prompt.strip()
+                prompts.append(prompt_text)
+            else:
+                prompts.append("[未找到提示词]")
+        return prompts
     def on_story_changed(self, content):
         self.data.story_text = content
 
@@ -10578,7 +11824,8 @@ class SimpleModeController:
                 from utils.ai_utils import call_deepseek
 
                 parser = FreeParser(call_deepseek, story_title=self.app.toolbar.title_entry.get(), mode="自由模式")
-                result = parser.parse(self.data.story_text, metadata=self.data.metadata)
+                result = parser.parse(self.data.story_text, metadata=self.data.metadata, work_dir=self.ui.work_dir,
+                                    log_callback=self.app.log, verbose=True)   # 测试时开启
                 scenes = result.get("scenes", [])
                 self.data.script_data = scenes
 
@@ -10616,14 +11863,15 @@ class SimpleModeController:
 
     def _on_script_generated(self, scenes):
         """剧本生成完成后的UI更新"""
-        # 将 scenes 显示到剧本标签页（简单转为文本）
-        text = self._format_scenes_to_text(scenes)
         self.ui.script_tab.display_scenes(scenes)
-        # 启用下一步按钮
         self.ui.set_button_state('normal', 'normal', 'disabled', 'disabled')
         self.ui.gen_script_btn.config(text="1. 生成剧本")
         self.app.log("剧本生成完成")
-        # 自动切换到剧本标签页
+        # 刷新资产库面板
+        if hasattr(self.ui, 'assets_tab'):
+            self.ui.assets_tab.work_dir = self.ui.work_dir
+            self.ui.assets_tab.refresh_file_list()
+        # 切换到剧本标签页
         self.ui.notebook.select(self.ui.script_tab.frame)
 
     def _format_scenes_to_text(self, scenes):
@@ -10644,27 +11892,6 @@ class SimpleModeController:
                 lines.append("")
             lines.append("")
         return "\n".join(lines)
-
-    def extract_assets(self):
-        """步骤2：提取资产库（基于剧本）"""
-        if not self.data.script_data:
-            messagebox.showwarning("提示", "请先生成剧本")
-            return
-
-        self.ui.set_button_state('disabled', 'disabled', 'disabled', 'disabled')
-        self.ui.extract_assets_btn.config(text="提取中...")
-        self.app.log("正在提取资产库（人物、场景、风格），请稍候...")
-
-        def task():
-            try:
-                # 从剧本中提取资产
-                assets = self._extract_assets_from_script(self.data.script_data)
-                self.data.assets = assets
-                self.app.root.after(0, self._on_assets_extracted)
-            except Exception as e:
-                self.app.root.after(0, lambda: messagebox.showerror("错误", f"提取资产失败：{e}"))
-                self.app.root.after(0, self._reset_buttons)
-        threading.Thread(target=task, daemon=True).start()
 
     def _extract_assets_from_script(self, script_data):
         """从剧本数据中提取人物、场景、风格"""
@@ -10690,33 +11917,217 @@ class SimpleModeController:
             'style': style
         }
 
-    def _on_assets_extracted(self):
-        """资产提取完成后的UI更新"""
-        self.ui.assets_tab.update_assets(self.data.assets)
-        self.ui.set_button_state('normal', 'normal', 'normal', 'disabled')
-        self.ui.extract_assets_btn.config(text="2. 提取资产")
-        self.app.log("资产提取完成")
-        self.ui.notebook.select(self.ui.assets_tab.frame)
-
     def generate_prompts(self):
         """步骤3：生成提示词"""
-        # 待实现：调用 auto_split_deepseek 生成提示词
-        messagebox.showinfo("提示", "此功能待实现")
-        # 暂时启用确认按钮
-        # self.ui.set_button_state('normal', 'normal', 'normal', 'normal')
+        if not self.data.assets:
+            messagebox.showwarning("提示", "请先提取资产")
+            return
+
+        work_dir = self.ui.work_dir
+        if not work_dir:
+            messagebox.showerror("错误", "未设置工作目录")
+            return
+
+        # 检查必需文件
+        global_assets = os.path.join(work_dir, "assets_global.txt")
+        if not os.path.exists(global_assets):
+            messagebox.showerror("错误", "缺少全局资产文件，请先生成剧本")
+            return
+        para_assets = glob.glob(os.path.join(work_dir, "assets_paragraph_*.txt"))
+        if not para_assets:
+            messagebox.showerror("错误", "缺少段落资产文件，请先生成剧本")
+            return
+
+        self.ui.set_button_state('disabled', 'disabled', 'disabled', 'disabled')
+        self.ui.gen_prompts_btn.config(text="生成中...")
+        self.app.log("正在生成视频提示词...")
+
+        def task():
+            try:
+                readable_path = self._run_auto_split(work_dir)
+                self.app.log(f"生成易读版文件: {readable_path}")
+                prompts = self._parse_prompts_from_readable(readable_path)
+                self.app.log(f"成功解析 {len(prompts)} 条提示词")
+                self.data.prompts = prompts
+                # 在主线程中更新 UI
+                self.app.root.after(0, lambda: self.ui.prompts_tab.display_prompts(prompts))
+                self.app.root.after(0, self._on_prompts_generated)
+            except Exception as e:
+                self.app.log(f"生成提示词失败: {e}")
+                import traceback
+                traceback.print_exc()
+                self.app.root.after(0, self._reset_buttons)
+
+        threading.Thread(target=task, daemon=True).start()
+
+        def task():
+            try:
+                readable_path = self._run_auto_split(work_dir)
+                prompts = self._parse_prompts_from_readable(readable_path)
+                # 保存提示词列表到数据模型
+                self.data.prompts = prompts
+                # 在提示词标签页显示
+                self.app.root.after(0, lambda: self.ui.prompts_tab.display_prompts(prompts))
+                self.app.root.after(0, self._on_prompts_generated)
+            except Exception as e:
+                self.app.root.after(0, lambda: messagebox.showerror("错误", f"生成提示词失败：{e}"))
+                self.app.root.after(0, self._reset_buttons)
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _on_prompts_generated(self):
+        self.ui.set_button_state('normal', 'normal', 'normal', 'disabled')
+        self.ui.gen_prompts_btn.config(text="2. 生成提示词")
+        self.app.log("提示词生成完成")
+        self.ui.notebook.select(self.ui.prompts_tab.frame)
 
     def confirm_and_generate(self):
-        """步骤4：确认并生成视频"""
-        # 待实现：触发原有视频生成流程
-        messagebox.showinfo("提示", "此功能待实现")
+        """生成视频"""
+        work_dir = self.ui.work_dir
+        if not work_dir:
+            messagebox.showerror("错误", "未设置工作目录")
+            return
+        # 查找最新易读版文件
+        import glob
+        pattern = os.path.join(work_dir, "分镜结果_易读版_*.txt")
+        files = glob.glob(pattern)
+        if not files:
+            messagebox.showerror("错误", "未找到易读版分镜文件，请先生成提示词")
+            return
+        readable_file = max(files, key=os.path.getmtime)
+        from core.comfyui_manager_simple import SimpleVideoGenerator
+        temp_manager = SimpleVideoGenerator("", "")
+        shots_info = temp_manager.get_shots_info(readable_file)
+        if not shots_info:
+            messagebox.showerror("错误", "解析镜头信息失败")
+            return
+
+        # 创建带时间戳的视频文件夹
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        video_dir = os.path.join(work_dir, "视频")
+        os.makedirs(video_dir, exist_ok=True)
+        self.ui.current_video_dir = video_dir
+
+        # 设置视频面板的视频目录
+        if hasattr(self.ui, 'video_tab'):
+            self.ui.video_tab.set_video_dir(video_dir)
+
+        # 获取视频设置
+        resolution = self.app.resolution_var.get()
+        if not resolution:
+            messagebox.showerror("错误", "请先选择分辨率")
+            return
+        workflow = self.app.workflow_var.get()
+        if workflow == "WAN2.2":
+            template_file = "video_wan2_2_14B_t2v.json"
+        else:
+            template_file = "LTX2.3文生API.json"
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        template_path = os.path.join(project_root, "workflow_templates", template_file)
+
+        # 创建管理器并生成视频
+        api_url = config_manager.COMFYUI_API_URL
+        manager = SimpleVideoGenerator(api_url=api_url, output_base_dir=video_dir, auto_trim=True)
+        manager.set_log_callback(self.app.log)
+
+        title = os.path.basename(work_dir).split('_')[0]
+        # 禁用生成视频按钮
+        self.ui.set_button_state('disabled', 'disabled', 'disabled', 'disabled')
+        self.app.log("正在生成视频，请稍候...")
+
+        def task():
+            try:
+                success, msg = manager.run(title, work_dir, resolution, template_path, selected_shots=None)
+                if success:
+                    self.app.log("视频生成完成")
+                else:
+                    self.app.log(f"视频生成失败: {msg}")
+                    self.app.root.after(0, lambda: messagebox.showerror("错误", f"视频生成失败：{msg}"))
+                # 刷新视频面板
+                self.app.root.after(0, lambda: self._on_video_generated(video_dir))
+            except Exception as e:
+                self.app.log(f"视频生成异常: {e}")
+                self.app.root.after(0, lambda: messagebox.showerror("错误", f"视频生成异常：{e}"))
+            finally:
+                self.app.root.after(0, lambda: self.ui.set_button_state('normal', 'normal', 'normal', 'disabled'))
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _on_video_generated(self, video_dir):
+        """视频生成完成后的回调"""
+        if hasattr(self.ui, 'video_tab'):
+            self.ui.video_tab.set_video_dir(video_dir)
+        self.app.log("视频面板已刷新")
+
+    def retake_single_shot(self, shot_id):
+        """重试生成单个镜头"""
+        work_dir = self.ui.work_dir
+        if not work_dir:
+            messagebox.showerror("错误", "未设置工作目录")
+            return
+        video_dir = self.ui.current_video_dir
+        if not video_dir or not os.path.isdir(video_dir):
+            messagebox.showerror("错误", "未找到当前视频文件夹，请先生成视频")
+            return
+
+        # 获取视频设置
+        resolution = self.app.resolution_var.get()
+        if not resolution:
+            messagebox.showerror("错误", "请先选择分辨率")
+            return
+        workflow = self.app.workflow_var.get()
+        if workflow == "WAN2.2":
+            template_file = "video_wan2_2_14B_t2v.json"
+        else:
+            template_file = "LTX2.3文生API.json"
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        template_path = os.path.join(project_root, "workflow_templates", template_file)
+
+        # 创建管理器
+        api_url = config_manager.COMFYUI_API_URL
+        manager = comfyui_manager.SimpleVideoGenerator(api_url=api_url, output_base_dir=video_dir, auto_trim=True)
+        manager.set_log_callback(self.app.log)
+
+        title = os.path.basename(work_dir).split('_')[0]
+
+        # 禁用重试按钮
+        if hasattr(self.ui, 'video_tab'):
+            self.ui.video_tab.set_retake_button_state(False)
+
+        def task():
+            try:
+                success, msg = manager.run(title, work_dir, resolution, template_path, selected_shots=[shot_id])
+                if success:
+                    self.app.log(f"镜头 {shot_id} 重试成功")
+                else:
+                    self.app.log(f"镜头 {shot_id} 重试失败: {msg}")
+                    self.app.root.after(0, lambda: messagebox.showerror("错误", f"重试失败：{msg}"))
+                # 刷新视频面板
+                self.app.root.after(0, lambda: self._refresh_video_tab(video_dir))
+            except Exception as e:
+                self.app.log(f"重试异常: {e}")
+                self.app.root.after(0, lambda: messagebox.showerror("错误", f"重试异常：{e}"))
+            finally:
+                self.app.root.after(0, lambda: self.ui.video_tab.set_retake_button_state(True))
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _refresh_video_tab(self):
+        """刷新视频面板（在主线程中调用）"""
+        if hasattr(self.ui, 'video_tab'):
+            self.ui.video_tab.refresh_video_list()
+
+    def merge_videos(self):
+        """合并视频（占位）"""
+        messagebox.showinfo("提示", "合并视频功能待实现")
 
     def _reset_buttons(self):
         """重置按钮状态"""
         self.ui.set_button_state('normal', 'disabled', 'disabled', 'disabled')
         self.ui.gen_script_btn.config(text="1. 生成剧本")
-        self.ui.extract_assets_btn.config(text="2. 提取资产")
-        self.ui.gen_prompts_btn.config(text="3. 生成提示词")
-        self.ui.confirm_btn.config(text="✅ 确认并生成视频")
+        self.ui.gen_prompts_btn.config(text="2. 生成提示词")
+        self.ui.gen_video_btn.config(text="3. 生成视频")
 
     def open_style_preset(self):
         from gui.preset_manager import PresetManagerWindow
@@ -10773,6 +12184,7 @@ class SimpleModeData:
         self.prompts = []             # 提示词列表（每个镜头一个字符串）
         self.current_tab = 0          # 当前标签页索引
         self.metadata = {}            # 高级向导生成的元数据
+        self.prompts = []
 ```
 
 ### gui\simple\prompts_tab.py
@@ -10798,103 +12210,270 @@ class PromptsTab:
             self.text_widget.insert('end', f"【镜头 {idx}】\n")
             self.text_widget.insert('end', f"{prompt}\n\n")
         self.text_widget.config(state='disabled')
+        # 不再调用 self.app.log，避免属性错误
 ```
 
 ### gui\simple\script_tab.py
 ```py
 # gui/simple/script_tab.py
 import tkinter as tk
-from tkinter import ttk
-from tkinter import scrolledtext
+from tkinter import ttk, scrolledtext, messagebox
+import os
+import re
 
 class ScriptTab:
     def __init__(self, parent, controller):
         self.controller = controller
         self.frame = tk.Frame(parent)
-        
-        # 创建 Treeview
+        self.work_dir = None
+        self.current_shots_data = []  # 存储完整的镜头数据
+
+        # 左右分栏
+        self.paned = ttk.PanedWindow(self.frame, orient=tk.HORIZONTAL)
+        self.paned.pack(fill='both', expand=True, padx=5, pady=5)
+
+        # 左侧：表格
+        left_frame = ttk.Frame(self.paned)
+        self.paned.add(left_frame, weight=3)
+
         columns = ('scene', 'shot', 'description', 'action')
-        self.tree = ttk.Treeview(self.frame, columns=columns, show='headings')
+        self.tree = ttk.Treeview(left_frame, columns=columns, show='headings')
         self.tree.heading('scene', text='场次')
         self.tree.heading('shot', text='镜头序号')
         self.tree.heading('description', text='场景描述')
         self.tree.heading('action', text='镜头描述')
-
-        self.text_widget = scrolledtext.ScrolledText(self.frame, wrap='word', height=20)
-        self.text_widget.pack(fill='both', expand=True, padx=5, pady=5)
-        self.text_widget.config(state='disabled')
-        
-        # 设置列宽
         self.tree.column('scene', width=80, anchor='center')
         self.tree.column('shot', width=80, anchor='center')
-        self.tree.column('description', width=300)
-        self.tree.column('action', width=400)
-        
-        # 滚动条
-        scrollbar = ttk.Scrollbar(self.frame, orient='vertical', command=self.tree.yview)
+        self.tree.column('description', width=250)
+        self.tree.column('action', width=350)
+
+        scrollbar = ttk.Scrollbar(left_frame, orient='vertical', command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
-        
         self.tree.pack(side='left', fill='both', expand=True)
         scrollbar.pack(side='right', fill='y')
-        
-        # 底部按钮（编辑、新增等）
-        btn_frame = tk.Frame(self.frame)
-        btn_frame.pack(fill='x', pady=5)
-        tk.Button(btn_frame, text="编辑镜头", command=self.edit_shot).pack(side='left', padx=2)
-        tk.Button(btn_frame, text="新增镜头", command=self.add_shot).pack(side='left', padx=2)
-        tk.Button(btn_frame, text="删除镜头", command=self.delete_shot).pack(side='left', padx=2)
-    
+
+        # 右侧：按钮区域
+        right_frame = ttk.Frame(self.paned, width=100)
+        self.paned.add(right_frame, weight=1)
+
+        self.edit_btn = tk.Button(right_frame, text="编辑镜头", command=self.edit_shot, width=12)
+        self.edit_btn.pack(pady=5)
+        self.add_btn = tk.Button(right_frame, text="新增镜头", command=self.add_shot, width=12)
+        self.add_btn.pack(pady=5)
+        self.del_btn = tk.Button(right_frame, text="删除镜头", command=self.delete_shot, width=12)
+        self.del_btn.pack(pady=5)
+
+        self.status_label = tk.Label(right_frame, text="", fg='gray')
+        self.status_label.pack(pady=10)
+
     def update_script_data(self, script_data):
-        """根据剧本数据刷新表格"""
-        # 清空现有数据
+        """由控制器调用，更新表格数据"""
+        self.current_shots_data = script_data
+        self._refresh_tree()
+
+    def _refresh_tree(self):
+        """根据 current_shots_data 刷新表格"""
+        self.tree.delete(*self.tree.get_children())
+        for scene in self.current_shots_data:
+            scene_id = scene.get('id')
+            for idx, shot in enumerate(scene.get('shots', []), start=1):
+                shot_id = f"{scene_id}-{idx}"
+                scene_desc = shot.get('scene', '')[:50]
+                action_desc = shot.get('visual', '')[:50]
+                self.tree.insert('', 'end', values=(scene_id, shot_id, scene_desc, action_desc),
+                                 tags=(scene_id, idx-1))
+
+    def _get_selected_shot(self):
+        """获取当前选中的镜头，返回 (scene_index, shot_index, scene_dict, shot_dict)"""
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showwarning("提示", "请先选中一个镜头")
+            return None, None, None, None
+        item = selection[0]
+        values = self.tree.item(item, 'values')
+        scene_id = values[0]
+        # 找到场景索引
+        for s_idx, scene in enumerate(self.current_shots_data):
+            if str(scene.get('id')) == str(scene_id):
+                # 找到镜头索引
+                shot_id_full = values[1]
+                try:
+                    shot_idx = int(shot_id_full.split('-')[1]) - 1
+                except:
+                    continue
+                if 0 <= shot_idx < len(scene['shots']):
+                    return s_idx, shot_idx, scene, scene['shots'][shot_idx]
+        messagebox.showerror("错误", "未找到对应镜头")
+        return None, None, None, None
+
+    def edit_shot(self):
+        """编辑当前选中的镜头"""
+        s_idx, sh_idx, scene, shot = self._get_selected_shot()
+        if shot is None:
+            return
+
+        win = tk.Toplevel(self.frame)
+        win.title(f"编辑镜头 {scene['id']}-{sh_idx+1}")
+        win.geometry("700x600")
+        win.transient(self.frame)
+        win.grab_set()
+
+        # 居中显示
+        parent = self.frame.winfo_toplevel()
+        parent_x = parent.winfo_x()
+        parent_y = parent.winfo_y()
+        parent_w = parent.winfo_width()
+        parent_h = parent.winfo_height()
+        win_w = 700
+        win_h = 600
+        x = parent_x + (parent_w // 2) - (win_w // 2)
+        y = parent_y + (parent_h // 2) - (win_h // 2)
+        win.geometry(f"+{x}+{y}")
+
+        main_frame = tk.Frame(win)
+        main_frame.pack(fill='both', expand=True, padx=10, pady=10)
+
+        fields = [
+            ('场景', 'scene'),
+            ('角色', 'roles'),
+            ('动作', 'action'),
+            ('对白', 'dialogue'),
+            ('视觉描述', 'visual'),
+            ('时长', 'duration'),
+            ('情绪基调', 'emotion'),
+            ('地域', 'region')
+        ]
+        entries = {}
+        row = 0
+        for label, key in fields:
+            tk.Label(main_frame, text=label + "：", anchor='w').grid(row=row, column=0, sticky='w', pady=2)
+            if key in ('visual', 'dialogue', 'action'):
+                text_widget = scrolledtext.ScrolledText(main_frame, height=5, wrap='word')
+                text_widget.grid(row=row, column=1, sticky='ew', pady=2)
+                if key == 'roles':
+                    value = ', '.join(shot.get(key, []))
+                else:
+                    value = shot.get(key, '')
+                text_widget.insert('1.0', value)
+                entries[key] = text_widget
+            else:
+                entry = tk.Entry(main_frame, width=50)
+                entry.grid(row=row, column=1, sticky='w', pady=2)
+                if key == 'duration':
+                    entry.insert(0, str(shot.get(key, 10)))
+                else:
+                    entry.insert(0, shot.get(key, ''))
+                entries[key] = entry
+            row += 1
+
+        def save():
+            new_shot = shot.copy()
+            for key, widget in entries.items():
+                if isinstance(widget, tk.Entry):
+                    value = widget.get().strip()
+                else:
+                    value = widget.get('1.0', 'end-1c').strip()
+                if key == 'roles':
+                    new_shot[key] = [r.strip() for r in value.split(',') if r.strip()]
+                elif key == 'duration':
+                    try:
+                        new_shot[key] = float(value)
+                    except:
+                        new_shot[key] = 10.0
+                else:
+                    new_shot[key] = value
+            self.current_shots_data[s_idx]['shots'][sh_idx] = new_shot
+            self._refresh_tree()
+            self._save_shots_to_file()
+            win.destroy()
+            self.status_label.config(text="镜头已更新", fg='green')
+            self.frame.after(3000, lambda: self.status_label.config(text=""))
+
+        tk.Button(win, text="保存", command=save, width=10).pack(pady=10)
+        win.columnconfigure(1, weight=1)
+
+    def add_shot(self):
+        """在当前选中场次末尾新增一个镜头"""
+        s_idx, _, scene, _ = self._get_selected_shot()
+        if scene is None:
+            return
+        new_shot = {
+            'scene': '',
+            'roles': [],
+            'action': '',
+            'dialogue': '',
+            'visual': '',
+            'duration': 10.0,
+            'emotion': '',
+            'region': '全球·无明确时代'
+        }
+        self.current_shots_data[s_idx]['shots'].append(new_shot)
+        self._refresh_tree()
+        self._select_last_shot(s_idx)
+        self.edit_shot()
+
+    def _select_last_shot(self, scene_idx):
+        """选中指定场次的最后一个镜头"""
+        scene = self.current_shots_data[scene_idx]
+        shot_count = len(scene['shots'])
+        if shot_count == 0:
+            return
+        shot_id = f"{scene['id']}-{shot_count}"
         for item in self.tree.get_children():
-            self.tree.delete(item)
-        
-        # 假设 script_data 是列表，每个元素为 (scene, shot, description, action)
-        # 具体格式待定
-        if script_data:
-            for row in script_data:
-                self.tree.insert('', 'end', values=row)
+            values = self.tree.item(item, 'values')
+            if values[1] == shot_id:
+                self.tree.selection_set(item)
+                self.tree.see(item)
+                break
+
+    def delete_shot(self):
+        """删除当前选中的镜头"""
+        s_idx, sh_idx, scene, shot = self._get_selected_shot()
+        if shot is None:
+            return
+        if not messagebox.askyesno("确认删除", f"确定要删除镜头 {scene['id']}-{sh_idx+1} 吗？"):
+            return
+        del self.current_shots_data[s_idx]['shots'][sh_idx]
+        self._refresh_tree()
+        self._save_shots_to_file()
+        self.status_label.config(text="镜头已删除", fg='red')
+        self.frame.after(3000, lambda: self.status_label.config(text=""))
+
+    def _save_shots_to_file(self):
+        """将 current_shots_data 保存为 shots.txt"""
+        if not self.work_dir:
+            if hasattr(self.controller, 'ui') and hasattr(self.controller.ui, 'work_dir'):
+                self.work_dir = self.controller.ui.work_dir
+            elif hasattr(self.controller, 'app') and hasattr(self.controller.app, 'work_dir'):
+                self.work_dir = self.controller.app.work_dir
+        if not self.work_dir:
+            return
+        shots_path = os.path.join(self.work_dir, "shots.txt")
+        with open(shots_path, 'w', encoding='utf-8') as f:
+            for scene in self.current_shots_data:
+                for idx, shot in enumerate(scene.get('shots', []), start=1):
+                    shot_id = f"{scene['id']}-{idx}"
+                    title = shot.get('title', f"镜头{shot_id}")
+                    f.write(f"【镜头{shot_id}：{title}】\n")
+                    f.write(f"- 场景：{shot.get('scene', '')}\n")
+                    roles_str = ', '.join(shot.get('roles', []))
+                    f.write(f"- 角色：{roles_str}\n")
+                    f.write(f"- 动作：{shot.get('action', '')}\n")
+                    f.write(f"- 对白：{shot.get('dialogue', '')}\n")
+                    f.write(f"- 视觉描述：{shot.get('visual', '')}\n")
+                    f.write(f"- 时长：{shot.get('duration', 10):.1f}秒\n")
+                    f.write(f"- 情绪基调：{shot.get('emotion', '')}\n")
+                    f.write(f"- 地域：{shot.get('region', '全球·无明确时代')}\n")
+                    f.write("===========================\n")
 
     def display_raw_text(self, text):
-        """显示原始文本（例如直接显示 shots.txt 内容）"""
-        self.text_widget.config(state='normal')
-        self.text_widget.delete('1.0', 'end')
-        self.text_widget.insert('1.0', text)
-        self.text_widget.config(state='disabled')
+        """兼容旧接口：直接显示文本（不推荐）"""
+        self.tree.delete(*self.tree.get_children())
+        self.tree.insert('', 'end', values=('', '', '旧格式文本', text[:100] + '...'))
 
     def display_scenes(self, scenes):
-        """根据 scenes 数据格式化显示剧本"""
-        text = ""
-        for scene in scenes:
-            text += f"【场次{scene['id']}：{scene['title']}】\n"
-            for idx, shot in enumerate(scene['shots'], start=1):
-                text += f"  镜头{idx}\n"
-                text += f"    - 场景：{shot.get('scene', '')}\n"
-                text += f"    - 角色：{', '.join(shot.get('roles', []))}\n"
-                text += f"    - 动作：{shot.get('action', '')}\n"
-                text += f"    - 对白：{shot.get('dialogue', '')}\n"
-                text += f"    - 视觉描述：{shot.get('visual', '')}\n"
-                text += f"    - 时长：{shot.get('duration', 10)}秒\n"
-                text += f"    - 情绪：{shot.get('emotion', '')}\n"
-                text += f"    - 地域：{shot.get('region', '')}\n"
-                text += "\n"
-            text += "\n"
-        self.display_raw_text(text)  # 复用现有方法
-    
-    def edit_shot(self):
-        selected = self.tree.selection()
-        if selected:
-            # 弹出编辑窗口
-            pass
-    
-    def add_shot(self):
-        pass
-    
-    def delete_shot(self):
-        selected = self.tree.selection()
-        if selected:
-            self.tree.delete(selected)
+        """由控制器调用，更新表格（与 update_script_data 类似）"""
+        self.update_script_data(scenes)
 ```
 
 ### gui\simple\story_tab.py
@@ -10909,7 +12488,7 @@ class StoryTab:
         self.frame = tk.Frame(parent)
         
         # 故事文本编辑区
-        tk.Label(self.frame, text="你的故事（请用讲故事的口吻写下来，越详细越好）").pack(anchor='w', padx=5, pady=(10,0))
+        tk.Label(self.frame, text="故事预览与修订").pack(anchor='w', padx=5, pady=(10,0))
         
         story_frame = tk.Frame(self.frame)
         story_frame.pack(fill='both', expand=True, padx=5, pady=2)
@@ -10976,6 +12555,217 @@ class StoryTab:
     def save_preset(self):
         style = self.style_text.get('1.0', 'end-1c').strip()
         self.controller.save_style_preset(style)
+```
+
+### gui\simple\video_tab.py
+```py
+# gui/simple/video_tab.py
+import tkinter as tk
+from tkinter import ttk, messagebox
+import os
+import glob
+import re
+
+class VideoTab:
+    def __init__(self, parent, controller, app):
+        self.controller = controller
+        self.app = app
+        self.frame = tk.Frame(parent)
+        self.work_dir = None
+        self.shots = []  # 存储每个镜头的完整信息
+
+        # 表格
+        columns = ('shot_id', 'description', 'status')
+        self.tree = ttk.Treeview(self.frame, columns=columns, show='headings', height=15)
+        self.tree.heading('shot_id', text='镜号')
+        self.tree.heading('description', text='镜头描述')
+        self.tree.heading('status', text='状态')
+        self.tree.column('shot_id', width=80, anchor='center')
+        self.tree.column('description', width=400)
+        self.tree.column('status', width=80, anchor='center')
+
+        scrollbar = ttk.Scrollbar(self.frame, orient='vertical', command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+
+        self.tree.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+
+        # 按钮区域
+        btn_frame = tk.Frame(self.frame)
+        btn_frame.pack(fill='x', pady=5)
+
+        self.preview_btn = tk.Button(btn_frame, text="预览", command=self.preview_shot, state='disabled')
+        self.preview_btn.pack(side='left', padx=2)
+
+        self.retake_btn = tk.Button(btn_frame, text="重试", command=self.retake_shot, state='disabled')
+        self.retake_btn.pack(side='left', padx=2)
+
+        self.refresh_btn = tk.Button(btn_frame, text="刷新", command=self.refresh_video_list)
+        self.refresh_btn.pack(side='left', padx=2)
+
+        # 绑定选中事件
+        self.tree.bind('<<TreeviewSelect>>', self.on_select)
+
+        # 注册视频生成回调
+        if hasattr(app, 'register_video_generation_callback'):
+            app.register_video_generation_callback(self.on_video_generated)
+
+    def set_retake_button_state(self, enabled):
+        """设置重试按钮的状态"""
+        state = 'normal' if enabled else 'disabled'
+        if hasattr(self, 'retake_btn'):
+            self.retake_btn.config(state=state)
+
+    def set_video_dir(self, video_dir):
+        """设置当前视频文件夹路径并刷新"""
+        self.video_dir = video_dir
+        self.refresh_video_list()
+
+    def set_work_dir(self, work_dir):
+        self.work_dir = work_dir
+        # 尝试查找已有的视频文件夹（用于历史项目）
+        import glob
+        video_dirs = glob.glob(os.path.join(work_dir, "视频"))
+        if video_dirs:
+            self.video_dir = max(video_dirs, key=os.path.getmtime)
+        else:
+            self.video_dir = None
+        self.refresh_video_list()
+
+    def _get_shot_description(self, shot_id):
+        """从易读版分镜文件中获取指定镜头的视觉描述"""
+        pattern = os.path.join(self.work_dir, "分镜结果_易读版_*.txt")
+        readable_files = glob.glob(pattern)
+        if not readable_files:
+            return ""
+        readable_file = max(readable_files, key=os.path.getmtime)
+        shots_info = self._parse_readable_file(readable_file)
+        for shot in shots_info:
+            if shot['id'] == shot_id:
+                return shot['visual'][:60]  # 截取前60字
+        return ""
+
+    def _scan_video_files(self):
+        """降级方案：直接扫描视频文件夹中的文件（无 manifest 时使用）"""
+        self.tree.delete(*self.tree.get_children())
+        shots_info = self._parse_readable_file(self._get_latest_readable())
+        video_files = {}
+        for f in os.listdir(self.video_dir):
+            if f.startswith("镜头") and (f.endswith(".mp4") or f.endswith(".gif")):
+                shot_id = f[2:].rsplit('.', 1)[0]
+                video_files[shot_id] = os.path.join(self.video_dir, f)
+        self.shots = []
+        for shot in shots_info:
+            shot_id = shot['id']
+            description = shot.get('visual', '')[:60]
+            video_path = video_files.get(shot_id)
+            status = "已生成" if video_path else "待生成"
+            self.shots.append({
+                'id': shot_id,
+                'description': description,
+                'video_path': video_path,
+                'status': status
+            })
+            self.tree.insert('', 'end', values=(shot_id, description, status))
+
+    def _get_latest_readable(self):
+        pattern = os.path.join(self.work_dir, "分镜结果_易读版_*.txt")
+        files = glob.glob(pattern)
+        return max(files, key=os.path.getmtime) if files else None
+
+    def refresh_video_list(self):
+        # 清空表格
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        if not self.video_dir or not os.path.isdir(self.video_dir):
+            return
+        manifest_path = os.path.join(self.video_dir, "video_manifest.json")
+        if not os.path.exists(manifest_path):
+            self._scan_video_files()
+            return
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            manifest = json.load(f)
+        self.shots = []
+        for item in manifest:
+            if item is None:
+                continue
+            shot_id = item['id']
+            video_path = os.path.join(self.video_dir, item['file'])
+            description = self._get_shot_description(shot_id)
+            status = "已生成" if os.path.exists(video_path) else "待生成"
+            self.shots.append({
+                'id': shot_id,
+                'description': description,
+                'video_path': video_path if os.path.exists(video_path) else None,
+                'status': status
+            })
+            self.tree.insert('', 'end', values=(shot_id, description, status))
+    def _parse_readable_file(self, readable_path):
+        """解析易读版分镜文件，返回镜头列表，每个镜头包含 id, visual"""
+        shots = []
+        with open(readable_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        blocks = re.split(r'\n\s*={5,}\s*\n', content.strip())
+        for block in blocks:
+            if not block.strip():
+                continue
+            header_match = re.search(r'【镜头(\d+-\d+)：', block)
+            if not header_match:
+                continue
+            shot_id = header_match.group(1)
+            # 提取视觉描述
+            visual_match = re.search(r'- 视觉描述：\s*(.*?)(?=\n-|\Z)', block, re.DOTALL)
+            visual = visual_match.group(1).strip() if visual_match else ""
+            shots.append({'id': shot_id, 'visual': visual})
+        return shots
+
+    def on_select(self, event):
+        """选中某行时启用预览和重试按钮"""
+        selection = self.tree.selection()
+        if selection:
+            self.preview_btn.config(state='normal')
+            self.retake_btn.config(state='normal')
+        else:
+            self.preview_btn.config(state='disabled')
+            self.retake_btn.config(state='disabled')
+
+    def preview_shot(self):
+        """预览当前选中的镜头视频"""
+        selection = self.tree.selection()
+        if not selection:
+            return
+        index = self.tree.index(selection[0])
+        if index >= len(self.shots):
+            return
+        shot = self.shots[index]
+        if shot['video_path'] and os.path.exists(shot['video_path']):
+            # 使用系统默认播放器打开
+            os.startfile(shot['video_path'])
+        else:
+            messagebox.showwarning("提示", f"镜头 {shot['id']} 未找到视频文件")
+
+    def retake_shot(self):
+        """重试生成当前选中的镜头"""
+        selection = self.tree.selection()
+        if not selection:
+            return
+        index = self.tree.index(selection[0])
+        if index >= len(self.shots):
+            return
+        shot = self.shots[index]
+        if not shot['id']:
+            return
+        # 调用控制器的重试方法
+        if hasattr(self.controller, 'retake_single_shot'):
+            self.controller.retake_single_shot(shot['id'])
+        else:
+            messagebox.showwarning("提示", "重试功能未实现")
+
+    def on_video_generated(self, shot_id):
+        """当镜头生成完成时调用，刷新列表（带防抖）"""
+        if hasattr(self, '_refresh_after_id'):
+            self.frame.after_cancel(self._refresh_after_id)
+        self._refresh_after_id = self.frame.after(500, self.refresh_video_list)
 ```
 
 ### gui\simple\__init__.py
@@ -11559,28 +13349,414 @@ import sys
 import os
 import re
 import json
+import concurrent.futures
+from typing import List, Dict, Any, Optional
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from .base_parser import BaseParser
-from utils import config_manager
+from utils import config_manager, settings
+from utils.error_logger import log_error
+
 
 class FreeParser(BaseParser):
+    """
+    自由模式解析器：将故事文本转化为结构化剧本。
+    采用两阶段 AI 调用：
+    1. 分段AI：切分段落并提取全局/局部资产（纯文本输出，代码解析）
+    2. 并发生成：为每个段落生成镜头剧本（镜头编号格式：段落ID-序号）
+    """
     def __init__(self, call_deepseek, story_title=None, mode=None):
         super().__init__(call_deepseek, story_title, mode)
-        self.metadata = None  # 存储高级向导传入的元数据
+        self.metadata = None
+        self.work_dir = None
+        self.global_assets_text = ""   # 存储全局资产纯文本
+        self.log_callback = None
+        self.verbose = False
 
-    def parse(self, raw_text, metadata=None, work_dir=None):
+    def parse(self, raw_text: str, metadata: Optional[Dict] = None, work_dir: Optional[str] = None,
+              log_callback: Optional[callable] = None, verbose: bool = False) -> Dict:
+        """
+        主入口：执行两阶段剧本生成，返回 {"scenes": [...]}
+        log_callback: 接收字符串的回调，用于输出进度信息
+        verbose: 是否输出详细日志（调试用）
+        """
         self.metadata = metadata or {}
-        prompt = self._build_script_prompt(raw_text)
-        result = self.call_deepseek(prompt, temperature=0.7, max_tokens=8000)
-        script_data = self._parse_script(result)
+        self.work_dir = work_dir
+        self.log_callback = log_callback
+        self.verbose = verbose
+
+        def log(msg, level='info'):
+            if self.log_callback:
+                if level == 'detail' and not self.verbose:
+                    return
+                prefix = "[详细] " if level == 'detail' else ""
+                self.log_callback(prefix + msg)
+
+        # 阶段一：段落切分 + 资产提取
+        log("正在调用分段AI，将故事切分为逻辑段落并提取资产...")
+        paragraphs_with_assets = self._extract_paragraphs_with_assets(raw_text, log)
+        if not paragraphs_with_assets:
+            log("分段AI失败，使用降级方案（一次性生成剧本）...")
+            return self._fallback_parse(raw_text, log)
+
+        log(f"分段完成，共 {len(paragraphs_with_assets)} 个段落")
+
+        # 阶段二：并发生成剧本
+        log("开始并发生成每个段落的剧本...")
+        scenes = self._generate_scripts_parallel(paragraphs_with_assets, log)
+
         # 重新编号场次
+        for idx, scene in enumerate(scenes, start=1):
+            scene['id'] = idx
+
+        log(f"剧本生成完成，共 {len(scenes)} 个场次")
+        return {"scenes": scenes}
+
+    # ===================== 阶段一：段落切分 =====================
+    def _extract_paragraphs_with_assets(self, raw_text: str, log) -> Optional[List[Dict]]:
+        prompt = self._build_segmentation_prompt(raw_text)
+        result = None
+        try:
+            log("正在请求分段AI...")
+            result = self.call_deepseek(prompt, temperature=0.3, max_tokens=8000)
+            log("分段AI响应完成，开始解析...")
+            if self.verbose:
+                log(f"分段AI响应内容（前200字符）: {result[:200]}...", 'detail')
+        except Exception as e:
+            log_error('free_parser', '分段AI调用失败', str(e))
+            log(f"分段AI调用失败: {e}")
+            return None
+
+        # 保存完整响应（调试用）
+        if self.work_dir:
+            full_path = os.path.join(self.work_dir, "segmentation_ai_response.txt")
+            with open(full_path, 'w', encoding='utf-8') as f:
+                f.write(result)
+
+        # 提取并保存全局资产库文本
+        global_pattern = re.compile(r'【全局资产库】\s*(.*?)(?=\n\s*【段落 \d+】|\Z)', re.DOTALL)
+        global_match = global_pattern.search(result)
+        if global_match:
+            self.global_assets_text = global_match.group(1).strip()
+            if self.work_dir:
+                global_path = os.path.join(self.work_dir, "assets_global.txt")
+                with open(global_path, 'w', encoding='utf-8') as f:
+                    f.write(self.global_assets_text)
+        else:
+            self.global_assets_text = ""
+
+        # 按段落分割，提取每个段落的文本和局部资产文本
+        blocks = re.split(r'\n\s*【段落 \d+】\s*\n', result)
+        paragraphs = []
+        para_idx = 1
+        for block in blocks:
+            block = block.strip()
+            if not block or block.startswith('【全局资产库】'):
+                continue
+            parts = re.split(r'\n\s*【局部资产】\s*\n', block, maxsplit=1)
+            if len(parts) < 2:
+                if self.log_callback:
+                    self.log_callback(f"警告：段落{para_idx}缺少局部资产块，跳过")
+                continue
+            text = parts[0].strip()
+            local_assets_text = parts[1].strip()   # 原始文本
+            # 解析建议时长
+            duration_match = re.search(r'- 建议时长：\s*(\d+)', local_assets_text)
+            suggested_duration = int(duration_match.group(1)) if duration_match else 0
+            paragraphs.append({
+                "text": text,
+                "local_assets_text": local_assets_text,
+                "suggested_duration": suggested_duration   # 新增
+            })
+            # 保存段落局部资产到文件
+            if self.work_dir:
+                local_path = os.path.join(self.work_dir, f"assets_paragraph_{para_idx}.txt")
+                with open(local_path, 'w', encoding='utf-8') as f:
+                    f.write(local_assets_text)
+            para_idx += 1
+
+        log(f"成功解析 {len(paragraphs)} 个段落及局部资产")
+        return paragraphs
+
+    def _build_segmentation_prompt(self, raw_text: str) -> str:
+        """构建分段AI的提示词（纯文本输出）"""
+        meta = self.metadata
+        meta_text = ""
+        if meta:
+            meta_text = "【创作元数据】\n"
+            for k, v in meta.items():
+                if v and v != "无特殊" and v != "无":
+                    meta_text += f"- {k}：{v}\n"
+            meta_text += "\n"
+
+        # 提取目标时长（分钟）
+        target_duration_min = 0
+        if meta and "目标时长" in meta:
+            dur_str = meta["目标时长"]
+            # 假设格式为 "5分钟" 或 "5"
+            match = re.search(r'(\d+)', dur_str)
+            if match:
+                target_duration_min = int(match.group(1))
+
+        # 构建时长控制说明
+        duration_instruction = ""
+        if target_duration_min > 0:
+            target_seconds = target_duration_min * 60
+            duration_instruction = f"""
+**重要：根据创作元数据，本次故事的目标总时长为 {target_seconds} 秒（{target_duration_min} 分钟）。**
+在生成段落时，你需要为每个段落估算一个合理的时长（秒），并记录在【局部资产】的“建议时长”字段中。所有段落的建议时长总和应接近目标总时长。
+"""
+
+        prompt = f"""
+你是一个专业的剧本分析助手。请完成以下任务：
+
+{meta_text}
+{duration_instruction}
+
+1. 将以下故事按语义分割成若干逻辑段落，每个段落应围绕一个相对独立的场景或事件。
+2. 从全文提取全局资产库：角色的固定属性（如外貌、气质、核心设定）、整体视觉风格。全局资产库用文本列表形式，每个资产项以“- 键：值”格式输出，放在“【全局资产库】”下方。
+
+   **重要：角色固定属性必须严格按照以下格式输出，每个字段都要包含，且描述必须明确、肯定，不得使用“或”等模棱两可的词语。性别字段只能为“男”或“女”。如果原文没有明确，请根据上下文推断最可能的一种，并直接写出。**
+   格式：
+   【角色名】 性别：X，年龄：X，发型：X，发色：X，脸型：X，身高：X，体型：X，惯用着装：X，气质描述：X。
+
+   示例：
+   - 角色固定属性：
+     【阿铁】 性别：男，年龄：少年，发型：短发，发色：黑，脸型：圆脸，身高：中等，体型：瘦削，惯用着装：深色短打工匠服，气质描述：坚韧、热血、对锻造充满纯粹热爱。
+
+3. 为每个段落提取局部资产库：该段落的场景、角色服装变化、道具、当前情绪、时间、地域等。局部资产也用文本列表形式，每个资产项以“- 键：值”格式输出。
+
+   如果指定了目标总时长，请在【局部资产】中添加一行“- 建议时长：X秒”，表示该段落应该占用的时长。
+
+请严格按照以下格式输出，不要添加任何额外解释：
+
+【全局资产库】
+- 整体视觉风格：...
+- 角色固定属性：
+  【角色名】 性别：...，年龄：...，发型：...，发色：...，脸型：...，身高：...，体型：...，惯用着装：...，气质描述：...
+
+【段落 1】
+段落文本内容...
+
+【局部资产】
+- 场景：具体场景描述
+- 角色服装：角色名：描述（如“阿铁：满脸煤灰，围裙脏旧”）
+- 道具：道具1，道具2
+- 时间：白天/夜晚等
+- 地域：国家·时代
+- 情绪：当前情绪基调
+- 建议时长：X秒   （如果指定了目标总时长）
+
+注意：
+- 段落之间用空行分隔。
+- 局部资产中的键名固定为：场景、角色服装、道具、时间、地域、情绪、建议时长。如果某个资产不存在，可以不写。
+- 角色服装可以是多个角色的描述，用分号分隔。
+
+故事内容：
+{raw_text}
+"""
+        return prompt
+
+    # ===================== 阶段二：并发生成剧本 =====================
+    def _generate_scripts_parallel(self, paragraphs_with_assets: List[Dict], log) -> List[Dict]:
+        """并发生成每个段落的场次数据"""
+        total = len(paragraphs_with_assets)
+        tasks = []
+        for idx, p in enumerate(paragraphs_with_assets):
+            # 构建上一个段落的摘要
+            prev_summary = ""
+            if idx > 0:
+                prev_text = paragraphs_with_assets[idx-1]['text']
+                prev_summary = prev_text[:100] + "..." if len(prev_text) > 100 else prev_text
+            tasks.append((idx, p['text'], p['local_assets_text'], prev_summary, p.get('suggested_duration', 0)))
+
+        results = [None] * total
+        with concurrent.futures.ThreadPoolExecutor(max_workers=settings.MAX_WORKERS) as executor:
+            future_to_idx = {
+                executor.submit(self._generate_script_for_paragraph, idx, text, local_assets, prev_summary, suggested_duration, log): idx
+                for idx, text, local_assets, prev_summary, suggested_duration in tasks
+            }
+            for future in concurrent.futures.as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    scene = future.result()
+                    results[idx] = scene
+                    if log:
+                        log(f"段落 {idx+1}/{total} 生成成功")
+                except Exception as e:
+                    log_error('free_parser', f'段落{idx+1}生成失败', str(e))
+                    if log:
+                        log(f"段落 {idx+1}/{total} 生成失败: {e}")
+                    results[idx] = None
+
+        # 合并结果，对失败段落使用后备场次
+        all_scenes = []
+        for i, scene in enumerate(results):
+            if scene is not None:
+                all_scenes.append(scene)
+            else:
+                fallback = self._create_fallback_scene(paragraphs_with_assets[i]['text'])
+                all_scenes.append(fallback)
+                if log:
+                    log(f"段落 {i+1} 使用后备场次")
+        return all_scenes
+
+    def _generate_script_for_paragraph(self, idx: int, text: str, local_assets_text: str, prev_summary: str, suggested_duration: int, log) -> Dict:
+        """为单个段落生成场次数据"""
+        paragraph_index = idx + 1  # 1-based，用于镜头编号
+        prompt = self._build_paragraph_prompt(text, local_assets_text, prev_summary, paragraph_index, suggested_duration)
+        try:
+            if log:
+                log(f"段落 {paragraph_index} 正在调用剧本AI...")
+            result = self.call_deepseek(prompt, temperature=0.7, max_tokens=4000)
+            if log:
+                log(f"段落 {paragraph_index} AI响应完成，开始解析...")
+            if self.verbose:
+                log(f"段落 {paragraph_index} AI响应（前200字符）: {result[:200]}...", 'detail')
+        except Exception as e:
+            log_error('free_parser', f'段落{paragraph_index} AI调用失败', str(e))
+            raise
+        scene = self._parse_single_scene(result, paragraph_index)
+        if not scene:
+            raise ValueError(f"解析场次失败: {result[:200]}")
+        scene['paragraph_index'] = idx
+        for shot in scene.get('shots', []):
+            shot['paragraph_index'] = idx
+        return scene
+
+    def _build_paragraph_prompt(self, text: str, local_assets_text: str, prev_summary: str, paragraph_index: int, suggested_duration: int = 0) -> str:
+        """构建单个段落的剧本生成提示词（纯文本输出）"""
+        meta = self.metadata
+        meta_text = ""
+        if meta:
+            meta_text = "【创作元数据】\n"
+            for k, v in meta.items():
+                if v and v != "无特殊" and v != "无":
+                    meta_text += f"- {k}：{v}\n"
+            meta_text += "\n"
+
+        global_text = self.global_assets_text if hasattr(self, 'global_assets_text') and self.global_assets_text else "无"
+        local_text = local_assets_text if local_assets_text else "无"
+
+        duration_instruction = ""
+        if suggested_duration > 0:
+            duration_instruction = f"""
+**重要：此段落的目标时长配额为 {suggested_duration} 秒。**
+请生成该段落的分镜头剧本，确保所有镜头的时长总和接近此配额（允许小幅偏差）。每个镜头时长必须在5-15秒之间，根据剧情需要合理分配。
+"""
+        else:
+            duration_instruction = """
+**重要：每个镜头的时长必须在5-15秒之间**，根据剧情需要合理分配。
+"""
+
+        dialogue_rule = """
+**对白与时长匹配规则**：
+- 中文对白/旁白：按平均语速每秒约3-4个字估算。例如，一句10个字的对白，至少需要3秒。
+- 请根据每个镜头的对白/旁白字数，合理设置该镜头的时长，确保朗读完整不仓促。
+- 如果某个镜头需要较长的对白，请适当增加时长（但不超过15秒），或者拆分对白到多个镜头。
+"""
+
+        prompt = f"""
+你是一位专业的影视编剧。请根据以下信息，为这一段故事生成分镜头剧本。注意：镜头编号格式为“【镜头{paragraph_index}-{{序号}}：标题】”。
+
+{meta_text}
+【全局资产库】（角色固定属性、整体风格）
+{global_text}
+
+【当前段落的局部资产】（场景、角色服装变化、道具等）
+{local_text}
+
+【上一段落的简要摘要】（用于剧情衔接）
+{prev_summary}
+
+【当前段落的故事文本】
+{text}
+
+{duration_instruction}
+{dialogue_rule}
+
+请严格按照以下格式输出，每个镜头单独一块，用空行分隔。镜头顺序按故事发展排列。
+
+【镜头{paragraph_index}-1：标题】
+- 场景：地点，时间，环境
+- 角色：本镜头出现的角色列表（可多个）
+- 动作：人物的具体动作描述
+- 对白：角色A：“台词” / 角色B：“台词” （多个对白用 / 分隔）
+- 视觉描述：关键画面描述，包括光影、色调、氛围等
+- 时长：X秒（必须为5-15之间的整数或小数，如8.0）
+- 情绪基调：XX
+- 地域：国家·时代（例如“中国·唐朝”或“全球·无明确时代”）
+
+【镜头{paragraph_index}-2：标题】
+...
+
+注意：
+- 对白中的引号使用中文引号“”。
+- 输出中不要有任何额外解释，只输出镜头块。
+- 如果局部资产中提到了特定服装、道具，请在镜头中体现。
+- 请根据对白字数合理设置时长，避免旁白念不完。
+"""
+        return prompt
+
+    def _parse_single_scene(self, text: str, paragraph_index: int) -> Optional[Dict]:
+        """解析单个段落的镜头块，返回场次字典"""
+        # 直接解析镜头块，不依赖场次标题
+        shot_blocks = re.split(r'\n\s*【镜头\d+-\d+：', text)
+        shots = []
+        for block in shot_blocks:
+            if not block.strip():
+                continue
+            # 可能第一个块之前有文本，忽略
+            if block.startswith('【镜头'):
+                block = '【镜头' + block
+            shot = self._parse_shot(block)
+            if shot:
+                shots.append(shot)
+        if not shots:
+            return None
+        title = f"段落{paragraph_index}"
+        return {
+            'id': 0,
+            'title': title,
+            'shots': shots
+        }
+
+    def _create_fallback_scene(self, text: str) -> Dict:
+        return {
+            "id": 0,
+            "title": "段落生成失败",
+            "shots": [
+                {
+                    "scene": "未知",
+                    "roles": [],
+                    "action": "（由于AI生成失败，此镜头为默认内容）",
+                    "dialogue": "",
+                    "visual": "请根据原始故事手动编辑",
+                    "duration": 10.0,
+                    "emotion": "中性",
+                    "region": "全球·无明确时代"
+                }
+            ]
+        }
+
+    # ===================== 降级方案 =====================
+    def _fallback_parse(self, raw_text: str, log) -> Dict:
+        prompt = self._build_script_prompt(raw_text)
+        try:
+            log("正在调用剧本AI（降级模式）...")
+            result = self.call_deepseek(prompt, temperature=0.7, max_tokens=8000)
+            if self.verbose:
+                log(f"降级AI响应（前200字符）: {result[:200]}...", 'detail')
+        except Exception as e:
+            log_error('free_parser', '降级AI调用失败', str(e))
+            raise
+        script_data = self._parse_script(result)
         for idx, scene in enumerate(script_data, start=1):
             scene['id'] = idx
         return {"scenes": script_data}
 
-    def _build_script_prompt(self, story_text):
-        """构建剧本生成的 prompt"""
+    def _build_script_prompt(self, story_text: str) -> str:
         meta = self.metadata
         meta_text = ""
         if meta:
@@ -11630,25 +13806,20 @@ class FreeParser(BaseParser):
 """
         return prompt
 
-    def _parse_script(self, text):
-        """解析 AI 返回的剧本文本，生成结构化数据"""
+    def _parse_script(self, text: str) -> List[Dict]:
         scenes = []
-        # 按场次分割
-        scene_blocks = re.split(r'\n\s*【场次\d+：', text)
+        scene_blocks = re.split(r'\n\s*【场次[^】]+：', text)
         for block in scene_blocks:
             if not block.strip():
                 continue
-            # 提取场次标题（第一个场次标题可能被切掉，需要特殊处理）
             if not block.startswith('【场次'):
-                # 第一个块可能没有前导符，需要手动补上
-                block = '【场次1：' + block
-            # 提取场次标题
-            header_match = re.match(r'【场次(\d+)：([^】]+)】', block)
+                lines = block.strip().split('\n')
+                title = lines[0].strip() if lines else "未命名场次"
+                block = '【场次1：' + title + '】' + '\n'.join(lines[1:])
+            header_match = re.match(r'【场次[^】]+：([^】]+)】', block)
             if not header_match:
                 continue
-            scene_id = int(header_match.group(1))
-            scene_title = header_match.group(2).strip()
-            # 提取镜头块
+            scene_title = header_match.group(1).strip()
             shot_blocks = re.split(r'\n\s*【镜头\d+】', block)
             shots = []
             for shot_block in shot_blocks:
@@ -11658,14 +13829,13 @@ class FreeParser(BaseParser):
                 if shot:
                     shots.append(shot)
             scenes.append({
-                'id': scene_id,
+                'id': 0,
                 'title': scene_title,
                 'shots': shots
             })
         return scenes
 
-    def _parse_shot(self, shot_block):
-        """解析单个镜头块，返回字典"""
+    def _parse_shot(self, shot_block: str) -> Dict:
         shot = {
             'scene': '',
             'title': '',
@@ -11704,13 +13874,6 @@ class FreeParser(BaseParser):
             elif line.startswith('- 地域：'):
                 shot['region'] = line.split('：', 1)[-1].strip()
         return shot
-
-    def _write_shots(self, script_data):
-        """将剧本数据写入 shots.txt（工作目录由外部传入，这里需要知道工作目录）"""
-        # 注意：这里需要知道工作目录，但当前类没有 work_dir 属性
-        # 解决方法：在 parse 时传入 work_dir 参数，或者通过 set_work_dir 方法设置。
-        # 我们暂时在调用时由控制器负责写入，因为控制器有 work_dir。
-        pass
 ```
 
 ### parsers\mime_parser.py
