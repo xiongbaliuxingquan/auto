@@ -2,25 +2,29 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import json
+import threading
+import re
+
+from utils.ai_utils import call_deepseek
+
 
 class StoryWizard:
     def __init__(self, parent, app, on_finish):
         self.parent = parent
         self.app = app
-        self.on_finish = on_finish  # 回调函数，接收生成的口播稿文本
+        self.on_finish = on_finish  # 回调函数，接收生成的口播稿文本和metadata
         self.win = tk.Toplevel(parent)
         self.win.title("故事创作向导")
         self.win.geometry("600x500")
         self.win.transient(parent)
         self.win.grab_set()
         self.win.protocol("WM_DELETE_WINDOW", self.cancel)
-        # 获取屏幕尺寸
+
+        # 窗口居中
         screen_width = self.win.winfo_screenwidth()
         screen_height = self.win.winfo_screenheight()
-        # 窗口尺寸
         win_width = 600
         win_height = 500
-        # 计算位置
         x = (screen_width - win_width) // 2
         y = (screen_height - win_height) // 2
         self.win.geometry(f"{win_width}x{win_height}+{x}+{y}")
@@ -30,12 +34,202 @@ class StoryWizard:
 
         # 当前页码 (0,1,2)
         self.current_page = 0
-        self.pages = [self.create_page1, self.create_page2, self.create_page3]
-        self.page_frames = []
 
         self.create_widgets()
+
+        # 创建三个页面的 Frame（但只显示第一个）
+        self.page1_frame = ttk.Frame(self.content_frame)
+        self.page2_frame = ttk.Frame(self.content_frame)
+        self.page3_frame = ttk.Frame(self.content_frame)
+        self.create_page1(self.page1_frame)
+        self.create_page2(self.page2_frame)
+        self.create_page3(self.page3_frame)
+
         self.show_page(0)
 
+    # ------------------------------------------------------------
+    # 智能导入相关方法
+    # ------------------------------------------------------------
+    def _parse_idea_to_metadata(self, idea_text):
+        """调用AI解析一句话需求，返回metadata字典"""
+        prompt = f"""
+你是一个故事创作助手。请根据用户的一句话需求，提取以下信息，输出一个 JSON 对象。
+如果某项信息无法从需求中推断，则输出 null。
+
+用户需求：{idea_text}
+
+输出 JSON 格式如下：
+{{
+    "form": "2D动画|3D动画|真人实拍|其他",
+    "worldview": "现实世界|历史背景|奇幻架空|科幻未来|其他",
+    "emotion": "温馨治愈|热血励志|悬疑烧脑|幽默喜剧|伤感悲剧|其他",
+    "style_detail": "宫崎骏|新海诚|中国水墨|迪士尼|皮克斯|写实CG|赛博朋克|电影质感|纪录片风格|网剧质感|文艺片|其他",
+    "era_detail": "秦朝|唐朝|宋朝|明朝|民国|魔法|龙|蒸汽朋克|神话|赛博朋克|太空歌剧|后启示录|现代|近未来|过去十年|其他",
+    "core": "一场奇遇|一段旅程|一次成长|一个秘密|其他",
+    "duration_minutes": 数字（分钟）,
+    "gender": "男|女|不限",
+    "age": "少年|青年|中年|老年|不限",
+    "personality": ["热血","冷静","内向","幽默","沉稳"],
+    "plots": ["浪漫邂逅","逆境成长","团队合作","复仇反转","拯救世界"],
+    "tone": "先抑后扬|一路热血|温馨治愈|虐心伤感|幽默搞笑|其他",
+    "special": ["加入动物角色","加入旁白/诗歌","加入音乐元素","加入科幻设定"]
+}}
+注意：
+- 风格细化(style_detail)要根据形式(form)来推断合理值。
+- 时代背景(era_detail)要根据世界观(worldview)来推断。
+- 如果用户提到了具体风格如“宫崎骏”，则 form 应为“2D动画”，style_detail 为“宫崎骏”。
+- 如果用户提到了“迪士尼”，则 form 应为“2D动画”或“3D动画”，style_detail 为“迪士尼”。
+- 时长单位是分钟，如“1分钟”则输出 1。
+- 只输出 JSON，不要有任何额外文字。
+"""
+        try:
+            result = call_deepseek(prompt, temperature=0.3, max_tokens=2000)
+            # 清洗可能的 markdown 代码块
+            result = result.strip()
+            if result.startswith("```json"):
+                result = result[7:]
+            if result.startswith("```"):
+                result = result[3:]
+            if result.endswith("```"):
+                result = result[:-3]
+            result = result.strip()
+            metadata = json.loads(result)
+            return metadata
+        except Exception as e:
+            raise Exception(f"AI解析失败: {e}\n原始返回: {result[:200]}")
+
+    def import_idea(self):
+        """智能导入：解析一句话需求并自动填充所有页面"""
+        idea = self.idea_entry.get().strip()
+        if not idea:
+            messagebox.showwarning("提示", "请输入一句话需求")
+            return
+        self.import_btn.config(state='disabled', text="解析中...")
+
+        def task():
+            try:
+                metadata = self._parse_idea_to_metadata(idea)
+                self.win.after(0, lambda: self._apply_metadata(metadata))
+                self.win.after(0, lambda: messagebox.showinfo("成功", "智能导入完成，请检查各页选项"))
+            except Exception as e:
+                self.win.after(0, lambda: messagebox.showerror("错误", f"解析失败：{e}"))
+            finally:
+                self.win.after(0, lambda: self.import_btn.config(state='normal', text="智能导入"))
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _apply_metadata(self, meta):
+        """将解析出的metadata填充到各页控件"""
+        # 第一页
+        if meta.get('form'):
+            self.form_var.set(meta['form'])
+            self._on_form_change()  # 控制“其他”输入框状态
+        if meta.get('worldview'):
+            self.world_var.set(meta['worldview'])
+            self._on_world_change()
+        if meta.get('emotion'):
+            self.emotion_var.set(meta['emotion'])
+            self._on_emotion_change()
+
+        # 刷新第二页（因为第二页的选项依赖于第一页的选择）
+        self.refresh_page2()
+
+        # 延迟设置第二页的值（确保 refresh_page2 完成）
+        self.win.after(100, lambda: self._set_page2_values(meta))
+
+        # 第三页直接设置
+        self._set_page3_values(meta)
+
+    def _set_page2_values(self, meta):
+        """设置第二页的控件值（在 refresh_page2 之后调用）"""
+        if hasattr(self, 'style_var') and meta.get('style_detail'):
+            # 检查该选项是否存在，若不存在则设为“其他”并填入输入框
+            if self.style_var.get() != meta['style_detail']:
+                # 尝试在下拉选项中找到该值
+                found = False
+                for widget in self.style_frame.winfo_children():
+                    if isinstance(widget, ttk.Radiobutton) and widget.cget('text') == meta['style_detail']:
+                        found = True
+                        break
+                if found:
+                    self.style_var.set(meta['style_detail'])
+                else:
+                    self.style_var.set("其他")
+                    if hasattr(self, 'style_other_entry') and self.style_other_entry:
+                        self.style_other_entry.delete(0, tk.END)
+                        self.style_other_entry.insert(0, meta['style_detail'])
+        if hasattr(self, 'era_var') and meta.get('era_detail'):
+            found = False
+            for widget in self.era_frame.winfo_children():
+                if isinstance(widget, ttk.Radiobutton) and widget.cget('text') == meta['era_detail']:
+                    found = True
+                    break
+            if found:
+                self.era_var.set(meta['era_detail'])
+            else:
+                self.era_var.set("其他")
+                if hasattr(self, 'era_other_entry') and self.era_other_entry:
+                    self.era_other_entry.delete(0, tk.END)
+                    self.era_other_entry.insert(0, meta['era_detail'])
+        if hasattr(self, 'core_var') and meta.get('core'):
+            if meta['core'] in ["一场奇遇", "一段旅程", "一次成长", "一个秘密", "其他"]:
+                self.core_var.set(meta['core'])
+            else:
+                self.core_var.set("其他")
+                if hasattr(self, 'core_other_entry'):
+                    self.core_other_entry.delete(0, tk.END)
+                    self.core_other_entry.insert(0, meta['core'])
+        if meta.get('duration_minutes'):
+            self.duration_var.set(meta['duration_minutes'])
+
+    def _set_page3_values(self, meta):
+        """设置第三页的控件值"""
+        if meta.get('gender'):
+            self.gender_var.set(meta['gender'])
+        if meta.get('age'):
+            self.age_var.set(meta['age'])
+        if meta.get('personality'):
+            for trait in meta['personality']:
+                if trait in self.traits_vars:
+                    self.traits_vars[trait].set(True)
+                elif trait.strip():
+                    # 不在预设列表中的，填入“其他”输入框
+                    current = self.trait_other_entry.get().strip()
+                    if current:
+                        self.trait_other_entry.insert(0, trait + "，" + current)
+                    else:
+                        self.trait_other_entry.insert(0, trait)
+        if meta.get('plots'):
+            for plot in meta['plots']:
+                if plot in self.plot_vars:
+                    self.plot_vars[plot].set(True)
+                elif plot.strip():
+                    current = self.plot_other_entry.get().strip()
+                    if current:
+                        self.plot_other_entry.insert(0, plot + "，" + current)
+                    else:
+                        self.plot_other_entry.insert(0, plot)
+        if meta.get('tone'):
+            if meta['tone'] in ["先抑后扬", "一路热血", "温馨治愈", "虐心伤感", "幽默搞笑", "其他"]:
+                self.tone_var.set(meta['tone'])
+            else:
+                self.tone_var.set("其他")
+                self.tone_other_entry.delete(0, tk.END)
+                self.tone_other_entry.insert(0, meta['tone'])
+        if meta.get('special'):
+            for spec in meta['special']:
+                if spec in self.special_vars:
+                    self.special_vars[spec].set(True)
+                elif spec.strip():
+                    current = self.special_other_entry.get().strip()
+                    if current:
+                        self.special_other_entry.insert(0, spec + "，" + current)
+                    else:
+                        self.special_other_entry.insert(0, spec)
+
+    # ------------------------------------------------------------
+    # UI 创建
+    # ------------------------------------------------------------
     def create_widgets(self):
         # 顶部标题
         self.title_label = ttk.Label(self.win, text="第一步：宏观设定", font=('微软雅黑', 12, 'bold'))
@@ -55,8 +249,18 @@ class StoryWizard:
         self.cancel_btn = ttk.Button(btn_frame, text="取消", command=self.cancel)
         self.cancel_btn.pack(side='left', padx=5)
 
+    # ------------------- 第一页 -------------------
     def create_page1(self, frame):
-        """第一页：宏观设定"""
+        # 智能导入区域
+        idea_frame = ttk.Frame(frame)
+        idea_frame.pack(fill='x', pady=5)
+        ttk.Label(idea_frame, text="一句话需求：").pack(side='left')
+        self.idea_entry = ttk.Entry(idea_frame, width=40)
+        self.idea_entry.pack(side='left', padx=5, fill='x', expand=True)
+        self.import_btn = ttk.Button(idea_frame, text="智能导入", command=self.import_idea)
+        self.import_btn.pack(side='left')
+        ttk.Separator(frame, orient='horizontal').pack(fill='x', pady=5)
+
         # 1. 形式
         ttk.Label(frame, text="1. 形式：").pack(anchor='w', pady=(5,0))
         self.form_var = tk.StringVar()
@@ -68,13 +272,7 @@ class StoryWizard:
             rb.pack(side='left', padx=5)
         self.form_other_entry = ttk.Entry(form_frame, width=20, state='disabled')
         self.form_other_entry.pack(side='left', padx=5)
-
-        def on_form_change():
-            if self.form_var.get() == "其他":
-                self.form_other_entry.config(state='normal')
-            else:
-                self.form_other_entry.config(state='disabled')
-        self.form_var.trace('w', lambda *a: on_form_change())
+        self.form_var.trace('w', lambda *a: self._on_form_change())
 
         # 2. 世界观
         ttk.Label(frame, text="2. 世界观：").pack(anchor='w', pady=(5,0))
@@ -87,13 +285,7 @@ class StoryWizard:
             rb.pack(side='left', padx=5)
         self.world_other_entry = ttk.Entry(world_frame, width=20, state='disabled')
         self.world_other_entry.pack(side='left', padx=5)
-
-        def on_world_change():
-            if self.world_var.get() == "其他":
-                self.world_other_entry.config(state='normal')
-            else:
-                self.world_other_entry.config(state='disabled')
-        self.world_var.trace('w', lambda *a: on_world_change())
+        self.world_var.trace('w', lambda *a: self._on_world_change())
 
         # 3. 情感基调
         ttk.Label(frame, text="3. 情感基调：").pack(anchor='w', pady=(5,0))
@@ -106,23 +298,34 @@ class StoryWizard:
             rb.pack(side='left', padx=5)
         self.emotion_other_entry = ttk.Entry(emotion_frame, width=20, state='disabled')
         self.emotion_other_entry.pack(side='left', padx=5)
+        self.emotion_var.trace('w', lambda *a: self._on_emotion_change())
 
-        def on_emotion_change():
-            if self.emotion_var.get() == "其他":
-                self.emotion_other_entry.config(state='normal')
-            else:
-                self.emotion_other_entry.config(state='disabled')
-        self.emotion_var.trace('w', lambda *a: on_emotion_change())
+    def _on_form_change(self):
+        if self.form_var.get() == "其他":
+            self.form_other_entry.config(state='normal')
+        else:
+            self.form_other_entry.config(state='disabled')
 
+    def _on_world_change(self):
+        if self.world_var.get() == "其他":
+            self.world_other_entry.config(state='normal')
+        else:
+            self.world_other_entry.config(state='disabled')
+
+    def _on_emotion_change(self):
+        if self.emotion_var.get() == "其他":
+            self.emotion_other_entry.config(state='normal')
+        else:
+            self.emotion_other_entry.config(state='disabled')
+
+    # ------------------- 第二页 -------------------
     def create_page2(self, frame):
-        """第二页：风格与时长（动态）"""
-        # 动态创建内容，但先占位
         self.page2_frame = frame
-        self.page2_widgets = {}  # 存储动态创建的变量
+        # 内容动态生成，先占位，在 refresh_page2 中填充
         self.refresh_page2()
 
     def refresh_page2(self):
-        """根据第一轮答案刷新页面2"""
+        """根据第一页的选择，重新生成第二页的内容"""
         # 清除原有内容
         for widget in self.page2_frame.winfo_children():
             widget.destroy()
@@ -136,8 +339,8 @@ class StoryWizard:
 
         # 1. 风格细化
         ttk.Label(self.page2_frame, text="1. 风格细化：").pack(anchor='w', pady=(5,0))
-        style_frame = ttk.Frame(self.page2_frame)
-        style_frame.pack(anchor='w', fill='x', pady=2)
+        self.style_frame = ttk.Frame(self.page2_frame)
+        self.style_frame.pack(anchor='w', fill='x', pady=2)
         self.style_var = tk.StringVar()
         style_options = []
         if form == "真人实拍":
@@ -147,25 +350,23 @@ class StoryWizard:
         elif form == "3D动画":
             style_options = ["皮克斯", "写实CG", "赛博朋克"]
         else:
-            # 其他形式，显示输入框
             style_options = ["其他"]
         for opt in style_options:
-            rb = ttk.Radiobutton(style_frame, text=opt, variable=self.style_var, value=opt)
+            rb = ttk.Radiobutton(self.style_frame, text=opt, variable=self.style_var, value=opt)
             rb.pack(side='left', padx=5)
         if "其他" in style_options or not style_options:
-            self.style_other_entry = ttk.Entry(style_frame, width=20, state='normal')
+            self.style_other_entry = ttk.Entry(self.style_frame, width=20, state='normal')
             self.style_other_entry.pack(side='left', padx=5)
             self.style_var.set("其他")
         else:
             self.style_other_entry = None
-            # 默认选中第一个
             if style_options:
                 self.style_var.set(style_options[0])
 
         # 2. 时代/背景细化
         ttk.Label(self.page2_frame, text="2. 时代/背景细化：").pack(anchor='w', pady=(5,0))
-        era_frame = ttk.Frame(self.page2_frame)
-        era_frame.pack(anchor='w', fill='x', pady=2)
+        self.era_frame = ttk.Frame(self.page2_frame)
+        self.era_frame.pack(anchor='w', fill='x', pady=2)
         self.era_var = tk.StringVar()
         era_options = []
         if world == "历史背景":
@@ -179,10 +380,10 @@ class StoryWizard:
         else:
             era_options = ["其他"]
         for opt in era_options:
-            rb = ttk.Radiobutton(era_frame, text=opt, variable=self.era_var, value=opt)
+            rb = ttk.Radiobutton(self.era_frame, text=opt, variable=self.era_var, value=opt)
             rb.pack(side='left', padx=5)
         if "其他" in era_options or not era_options:
-            self.era_other_entry = ttk.Entry(era_frame, width=20, state='normal')
+            self.era_other_entry = ttk.Entry(self.era_frame, width=20, state='normal')
             self.era_other_entry.pack(side='left', padx=5)
             self.era_var.set("其他")
         else:
@@ -201,7 +402,6 @@ class StoryWizard:
             rb.pack(side='left', padx=5)
         self.core_other_entry = ttk.Entry(core_frame, width=20, state='disabled')
         self.core_other_entry.pack(side='left', padx=5)
-
         def on_core_change():
             if self.core_var.get() == "其他":
                 self.core_other_entry.config(state='normal')
@@ -222,8 +422,8 @@ class StoryWizard:
             self.duration_label.config(text=f"{self.duration_var.get()}分钟")
         self.duration_var.trace('w', on_duration)
 
+    # ------------------- 第三页 -------------------
     def create_page3(self, frame):
-        """第三页：细节设定"""
         # 1. 主角设定
         ttk.Label(frame, text="1. 主角设定：").pack(anchor='w', pady=(5,0))
         gender_frame = ttk.Frame(frame)
@@ -302,24 +502,35 @@ class StoryWizard:
         self.special_other_entry = ttk.Entry(special_frame, width=20)
         self.special_other_entry.pack(side='left', padx=5)
 
+    # ------------------------------------------------------------
+    # 页面切换与数据收集
+    # ------------------------------------------------------------
     def show_page(self, page):
-        # 销毁当前内容
-        for widget in self.content_frame.winfo_children():
-            widget.destroy()
-        # 创建新页面
-        frame = ttk.Frame(self.content_frame)
-        frame.pack(fill='both', expand=True)
-        self.page_frames.append(frame)
-        self.pages[page](frame)
+        # 隐藏所有页面
+        self.page1_frame.pack_forget()
+        self.page2_frame.pack_forget()
+        self.page3_frame.pack_forget()
+        # 显示当前页
+        if page == 0:
+            self.page1_frame.pack(fill='both', expand=True)
+        elif page == 1:
+            # 每次显示第二页前重新刷新（确保选项随第一页变化）
+            self.refresh_page2()
+            self.page2_frame.pack(fill='both', expand=True)
+        else:
+            self.page3_frame.pack(fill='both', expand=True)
+
         # 更新标题
         titles = ["第一步：宏观设定", "第二步：风格与时长", "第三步：细节设定"]
         self.title_label.config(text=titles[page])
         # 更新按钮状态
         self.prev_btn.config(state='normal' if page > 0 else 'disabled')
-        if page == len(self.pages)-1:
+        if page == 2:
             self.next_btn.config(text="完成")
         else:
             self.next_btn.config(text="下一步")
+
+        self.current_page = page
 
     def next_page(self):
         if self.current_page == 0:
@@ -347,16 +558,18 @@ class StoryWizard:
                 "世界观": world,
                 "情感基调": emotion
             })
+            self.current_page = 1
+            self.show_page(1)
         elif self.current_page == 1:
             # 收集第二页答案
             style = self.style_var.get()
-            if style == "其他" and self.style_other_entry:
+            if style == "其他" and hasattr(self, 'style_other_entry') and self.style_other_entry:
                 style = self.style_other_entry.get().strip()
                 if not style:
                     messagebox.showwarning("提示", "请输入其他风格")
                     return
             era = self.era_var.get()
-            if era == "其他" and self.era_other_entry:
+            if era == "其他" and hasattr(self, 'era_other_entry') and self.era_other_entry:
                 era = self.era_other_entry.get().strip()
                 if not era:
                     messagebox.showwarning("提示", "请输入其他时代/背景")
@@ -374,16 +587,20 @@ class StoryWizard:
                 "核心看点": core,
                 "目标时长": f"{duration}分钟"
             })
+            self.current_page = 2
+            self.show_page(2)
         elif self.current_page == 2:
             # 收集第三页答案
             gender = self.gender_var.get()
             age = self.age_var.get()
             traits = [t for t, var in self.traits_vars.items() if var.get()]
-            if self.trait_other_entry.get().strip():
-                traits.append(self.trait_other_entry.get().strip())
+            other_trait = self.trait_other_entry.get().strip()
+            if other_trait:
+                traits.append(other_trait)
             plots = [p for p, var in self.plot_vars.items() if var.get()]
-            if self.plot_other_entry.get().strip():
-                plots.append(self.plot_other_entry.get().strip())
+            other_plot = self.plot_other_entry.get().strip()
+            if other_plot:
+                plots.append(other_plot)
             tone = self.tone_var.get()
             if tone == "其他":
                 tone = self.tone_other_entry.get().strip()
@@ -391,8 +608,9 @@ class StoryWizard:
                     messagebox.showwarning("提示", "请输入其他情绪走向")
                     return
             specials = [s for s, var in self.special_vars.items() if var.get()]
-            if self.special_other_entry.get().strip():
-                specials.append(self.special_other_entry.get().strip())
+            other_special = self.special_other_entry.get().strip()
+            if other_special:
+                specials.append(other_special)
 
             self.answers.update({
                 "主角性别": gender,
@@ -404,46 +622,45 @@ class StoryWizard:
             })
             # 生成人设卡并调用 API
             self.generate_script()
-            return
-
-        self.current_page += 1
-        self.show_page(self.current_page)
 
     def prev_page(self):
-        self.current_page -= 1
-        self.show_page(self.current_page)
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.show_page(self.current_page)
 
+    # ------------------------------------------------------------
+    # 生成剧本
+    # ------------------------------------------------------------
     def generate_script(self):
         """将答案拼成人设卡，调用 API 生成口播稿"""
-        # 构建人设卡文本
         preset = f"""
-    你是一位专业的故事撰稿人。请根据以下要求生成一个完整的故事口播稿，用于视频制作。
+你是一位专业的故事撰稿人。请根据以下要求生成一个完整的故事口播稿，用于视频制作。
 
-    【主题】{self.app.toolbar.title_entry.get() or "未提供主题"}
+【主题】{self.app.toolbar.title_entry.get() or "未提供主题"}
 
-    【创作要求】
-    - 形式：{self.answers.get("形式")}
-    - 世界观：{self.answers.get("世界观")}
-    - 情感基调：{self.answers.get("情感基调")}
-    - 风格细化：{self.answers.get("风格细化")}
-    - 时代背景：{self.answers.get("时代背景")}
-    - 核心看点：{self.answers.get("核心看点")}
-    - 目标时长：{self.answers.get("目标时长")}
-    - 主角性别：{self.answers.get("主角性别")}
-    - 主角年龄：{self.answers.get("主角年龄")}
-    - 主角性格：{self.answers.get("主角性格")}
-    - 关键情节：{self.answers.get("关键情节")}
-    - 情绪走向：{self.answers.get("情绪走向")}
-    - 特殊要求：{self.answers.get("特殊要求")}
+【创作要求】
+- 形式：{self.answers.get("形式")}
+- 世界观：{self.answers.get("世界观")}
+- 情感基调：{self.answers.get("情感基调")}
+- 风格细化：{self.answers.get("风格细化")}
+- 时代背景：{self.answers.get("时代背景")}
+- 核心看点：{self.answers.get("核心看点")}
+- 目标时长：{self.answers.get("目标时长")}
+- 主角性别：{self.answers.get("主角性别")}
+- 主角年龄：{self.answers.get("主角年龄")}
+- 主角性格：{self.answers.get("主角性格")}
+- 关键情节：{self.answers.get("关键情节")}
+- 情绪走向：{self.answers.get("情绪走向")}
+- 特殊要求：{self.answers.get("特殊要求")}
 
-    【输出要求】
-    - 口播稿应直接输出，无额外说明。
-    - 开篇要有引人入胜的引子，结尾要有回味。
-    - 语言生动，适合视频旁白。
-    - 全文约{self.answers.get("目标时长")}的朗读量（约每分钟200字）。
-    """
+【输出要求】
+- 口播稿应直接输出，无额外说明。
+- 开篇要有引人入胜的引子，结尾要有回味。
+- 语言生动，适合视频旁白。
+- 全文约{self.answers.get("目标时长")}的朗读量（约每分钟200字）。
+- 严格按照目标时长控制故事篇幅，不要过短或过长。
+"""
 
-        # 构造 metadata 字典
         metadata = {
             "形式": self.answers.get("形式"),
             "世界观": self.answers.get("世界观"),
@@ -460,19 +677,13 @@ class StoryWizard:
             "特殊要求": self.answers.get("特殊要求")
         }
 
-        # 添加日志：开始生成
         self.app.log("高级向导：正在生成故事，请稍候...")
-
-        # 先关闭窗口，避免卡在窗口上
         self.win.destroy()
 
-        # 在后台线程中调用 API
-        import threading
         def task():
             from utils.story_to_script import generate_script
             try:
                 script = generate_script(preset, "")
-                # 在主线程中执行回调
                 self.app.root.after(0, lambda: self._on_generation_done(script, metadata))
             except Exception as e:
                 self.app.root.after(0, lambda: self._on_generation_error(e))
@@ -481,7 +692,6 @@ class StoryWizard:
 
     def _on_generation_done(self, script, metadata):
         print("_on_generation_done 被调用")
-        # 将 metadata 格式化为注释（HTML 风格，易读）
         meta_lines = ["<!-- 元数据开始"]
         for k, v in metadata.items():
             if v and v != "无特殊" and v != "无":
@@ -491,9 +701,7 @@ class StoryWizard:
         full_script = meta_text + script
         self.app.log("高级向导：故事生成完成")
         try:
-            print("准备调用 on_finish")
             self.on_finish(full_script, metadata)
-            print("on_finish 调用完成")
         except Exception as e:
             print(f"调用 on_finish 时出错: {e}")
             import traceback
