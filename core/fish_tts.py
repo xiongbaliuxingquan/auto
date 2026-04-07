@@ -63,11 +63,16 @@ def submit_workflow(api_url: str, workflow: dict) -> Optional[str]:
         print(f"提交异常: {e}")
         return None
 
-def wait_for_history(api_url: str, prompt_id: str, timeout: int = 300):
-    """等待工作流完成，返回 history 字典"""
+def wait_for_history(api_url: str, prompt_id: str, timeout: int = 300, log_callback=None) -> Optional[dict]:
+    """等待工作流完成，返回 history 字典，每10秒输出等待日志"""
     url = f"{api_url.rstrip('/')}/history/{prompt_id}"
     start = time.time()
+    last_log = start
     while time.time() - start < timeout:
+        if log_callback and (time.time() - last_log) >= 10:
+            elapsed = int(time.time() - start)
+            log_callback(f"正在生成音频，已等待 {elapsed} 秒...")
+            last_log = time.time()
         try:
             resp = requests.get(url, timeout=30)
             if resp.status_code == 200:
@@ -80,9 +85,9 @@ def wait_for_history(api_url: str, prompt_id: str, timeout: int = 300):
             time.sleep(2)
     return None
 
-def wait_for_audio(api_url: str, prompt_id: str, output_node: str, timeout: int = 300) -> Optional[str]:
-    """等待音频生成完成，返回音频文件的访问 URL（相对路径）"""
-    history = wait_for_history(api_url, prompt_id, timeout)
+def wait_for_audio(api_url: str, prompt_id: str, output_node: str, timeout: int = 300, log_callback=None) -> Optional[str]:
+    """等待音频生成完成，返回音频文件的访问 URL（相对路径），支持日志回调"""
+    history = wait_for_history(api_url, prompt_id, timeout, log_callback=log_callback)
     if not history:
         return None
     outputs = history[prompt_id].get('outputs', {})
@@ -93,7 +98,6 @@ def wait_for_audio(api_url: str, prompt_id: str, output_node: str, timeout: int 
             filename = audio_info.get('filename')
             subfolder = audio_info.get('subfolder', '')
             audio_url = f"/view?filename={urllib.parse.quote(filename)}&subfolder={urllib.parse.quote(subfolder)}&type=output"
-            print(f"audio_url = {audio_url}")   # <--- 添加这一行
             return audio_url
     return None
 
@@ -115,7 +119,7 @@ def download_audio(api_url: str, audio_url: str, save_path: str) -> bool:
         print(f"下载异常: {e}")
         return False
 
-def generate_single(text: str, index: int, output_dir: str, ref_audio_filename: str, ref_text: str, language: str = "zh") -> Optional[str]:
+def generate_single(text: str, index: int, output_dir: str, ref_audio_filename: str, ref_text: str, language: str = "zh", log_callback=None) -> Optional[str]:
     """生成单个音频片段，返回文件路径，失败返回 None"""
     with open(TTS_TEMPLATE_PATH, 'r', encoding='utf-8') as f:
         workflow = json.load(f)
@@ -134,7 +138,7 @@ def generate_single(text: str, index: int, output_dir: str, ref_audio_filename: 
         return None
 
     # 等待
-    audio_url = wait_for_audio(API_URL, prompt_id, "29")
+    audio_url = wait_for_audio(API_URL, prompt_id, "29", log_callback=log_callback)
     if not audio_url:
         print("等待音频生成失败")
         return None

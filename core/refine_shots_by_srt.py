@@ -34,29 +34,56 @@ def clean_text(t):
     """清洗文本：去除标点、空格、换行，只保留中文、字母、数字"""
     return re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9]', '', t)
 
-def merge_short_subs(subs, min_len=10):
-    """合并连续短字幕（文本长度<min_len），返回新的字幕列表"""
+def merge_short_subs(subs, min_len=5):
+    """
+    强制将长度小于 min_len 的字幕向下合并到下一个字幕。
+    如果已经是最后一条，则合并到前一条。
+    返回新的字幕列表，每条字幕的时间范围合并，文本合并（若目标已包含则不去重）。
+    """
     if not subs:
         return []
-    merged = []
-    current_group = []
-    for start, end, text in subs:
-        if len(text) < min_len:
-            current_group.append((start, end, text))
+    new_subs = []
+    i = 0
+    while i < len(subs):
+        current = subs[i]
+        # 如果当前字幕长度足够，直接加入
+        if len(current[2]) >= min_len:
+            new_subs.append(current)
+            i += 1
+            continue
+        
+        # 当前字幕过短，需要合并
+        # 优先尝试向下合并
+        if i + 1 < len(subs):
+            next_sub = subs[i+1]
+            # 合并时间范围
+            merged_start = current[0]
+            merged_end = next_sub[1]
+            # 合并文本：如果当前文本已经在下一个文本中，则不再重复添加
+            if current[2] in next_sub[2]:
+                merged_text = next_sub[2]
+            else:
+                merged_text = current[2] + " " + next_sub[2]
+            merged = (merged_start, merged_end, merged_text)
+            # 将合并后的字幕加入新列表，并跳过下一个（i+2）
+            new_subs.append(merged)
+            i += 2
         else:
-            if current_group:
-                merged_start = current_group[0][0]
-                merged_end = current_group[-1][1]
-                merged_text = ' '.join(t for _, _, t in current_group)
-                merged.append((merged_start, merged_end, merged_text))
-                current_group = []
-            merged.append((start, end, text))
-    if current_group:
-        merged_start = current_group[0][0]
-        merged_end = current_group[-1][1]
-        merged_text = ' '.join(t for _, _, t in current_group)
-        merged.append((merged_start, merged_end, merged_text))
-    return merged
+            # 最后一条且短，合并到前一个（如果新列表中有）
+            if new_subs:
+                prev = new_subs[-1]
+                merged_start = prev[0]
+                merged_end = current[1]
+                if current[2] in prev[2]:
+                    merged_text = prev[2]
+                else:
+                    merged_text = prev[2] + " " + current[2]
+                new_subs[-1] = (merged_start, merged_end, merged_text)
+            else:
+                # 只有一条且短，保留
+                new_subs.append(current)
+            i += 1
+    return new_subs
 
 def find_longest_match(a, b):
     """
@@ -387,19 +414,17 @@ def main(work_dir):
         json.dump(mapping, f, ensure_ascii=False, indent=2)
     log_print(f"镜头段落映射已保存至 {map_path}")
 
-    # 生成字幕映射文件（shot_subtitle_map.json）
-    map_path = os.path.join(work_dir, 'shot_subtitle_map.json')
-    shot_map = []
-    for idx, shot in enumerate(all_shots, start=1):
-        shot_map.append({
-            "shot_id": f"1-{idx}",
+    # 生成镜头真实时间文件（供后续填充 start_ms / end_ms）
+    shot_times_path = os.path.join(work_dir, 'shot_times.json')
+    shot_times_list = []
+    for shot in all_shots:
+        shot_times_list.append({
             "start_ms": shot['start_ms'],
-            "end_ms": shot['end_ms'],
-            "target_duration_ms": int(shot['duration'] * 1000)
+            "end_ms": shot['end_ms']
         })
-    with open(map_path, 'w', encoding='utf-8') as f:
-        json.dump(shot_map, f, ensure_ascii=False, indent=2)
-    log_print(f"字幕映射文件已生成 {map_path}")
+    with open(shot_times_path, 'w', encoding='utf-8') as f:
+        json.dump(shot_times_list, f, ensure_ascii=False, indent=2)
+    log_print(f"镜头时间文件已保存至 {shot_times_path}")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:

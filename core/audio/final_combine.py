@@ -6,18 +6,9 @@ import threading
 from utils.audio_utils import FFMPEG
 
 class FinalAudioCombine:
-    def __init__(self, work_dir):
+    def __init__(self, work_dir, log_callback=None):
         self.work_dir = work_dir
-        self.log_callback = None   # 可选的日志回调
-
-    def set_log_callback(self, callback):
-        self.log_callback = callback
-
-    def _log(self, msg):
-        if self.log_callback:
-            self.log_callback(msg)
-        else:
-            print(msg)
+        self.log = log_callback or (lambda msg: print(msg))
 
     def combine(self, confirmed_segments, callback):
         """
@@ -31,20 +22,19 @@ class FinalAudioCombine:
                 for seg in confirmed_segments:
                     audio_file = seg.get('audio_file')
                     if not audio_file:
-                        self._log(f"警告：片段 {seg.get('index')} 没有音频文件，跳过")
+                        self.log(f"警告：片段 {seg.get('index')} 没有音频文件，跳过")
                         continue
                     audio_file = audio_file.replace('\\', '/')
                     if not os.path.exists(audio_file):
-                        self._log(f"警告：音频文件不存在 {audio_file}，跳过")
+                        self.log(f"警告：音频文件不存在 {audio_file}，跳过")
                         continue
                     rel_path = os.path.relpath(audio_file, self.work_dir).replace('\\', '/')
                     f.write(f"file '{rel_path}'\n")
 
             final_audio = os.path.join(self.work_dir, "final_audio.mp3")
             cmd = [str(FFMPEG), '-y', '-f', 'concat', '-safe', '0', '-i', concat_file, '-ar', '16000', '-c:a', 'libmp3lame', '-b:a', '128k', final_audio]
-            self._log("正在合成最终音频（ffmpeg），请稍候...")
+            self.log("正在合成最终音频（ffmpeg），请稍候...")
             try:
-                # 使用 Popen 实时捕获输出
                 process = subprocess.Popen(
                     cmd,
                     cwd=self.work_dir,
@@ -57,28 +47,27 @@ class FinalAudioCombine:
                 )
                 for line in process.stdout:
                     if line.strip():
-                        self._log(line.rstrip())
+                        self.log(line.rstrip())
                 process.wait()
                 if process.returncode == 0 and os.path.exists(final_audio):
-                    self._log(f"最终音频已保存: {final_audio}")
+                    self.log(f"最终音频已保存: {final_audio}")
                     # 生成时间轴
                     timeline = self._generate_timeline(confirmed_segments)
                     timeline_path = os.path.join(self.work_dir, "audio_timeline.json")
                     with open(timeline_path, 'w', encoding='utf-8') as f:
                         json.dump(timeline, f, ensure_ascii=False, indent=2)
-                    self._log(f"时间轴已保存: {timeline_path}")
+                    self.log(f"时间轴已保存: {timeline_path}")
                     callback(True, final_audio)
                 else:
-                    self._log(f"ffmpeg 合成失败，返回码: {process.returncode}")
+                    self.log(f"ffmpeg 合成失败，返回码: {process.returncode}")
                     callback(False, None)
             except Exception as e:
-                self._log(f"合成异常: {e}")
+                self.log(f"合成异常: {e}")
                 callback(False, None)
 
         threading.Thread(target=run, daemon=True).start()
 
     def _generate_timeline(self, confirmed_segments):
-        """生成时间轴列表"""
         timeline = []
         total_ms = 0
         for seg in confirmed_segments:

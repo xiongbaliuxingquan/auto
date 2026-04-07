@@ -1,0 +1,126 @@
+📦 项目根目录
+│
+├── 🚀 gui_launcher.py               # 主程序入口，总控台GUI。整合所有模块，提供侧边栏导航、状态栏、日志、工作流调度
+│
+├── 📄 配置文件
+│   ├── workflow_config.json         # 工作流节点配置，定义LTX2.3和WAN2.2的节点ID映射（提示词、分辨率等）
+│   ├── 应用框架.json                 # 项目结构的文本描述文件（未在代码中直接使用）
+│   └── audio整体改造清单.txt         # 音频模块的重构计划文档（已按计划实施）
+│
+├── 🧩 core/                         # 核心业务逻辑模块（与UI解耦）
+│   ├── __init__.py
+│   ├── txt_to_json.py               # 【第一步】使用AI将原始文稿解析为结构化的JSON（segments, shots等）
+│   ├── paragraph_splitter.py        # 【模块1】分割段落 + 提取全局信息（人设卡、场景等）
+│   ├── auto_split_deepseek.py       # 【模块2】根据JSON生成分镜设计和提示词（核心AI调用，支持并发）
+│   ├── extract_prompts.py           # 【模块3】从分镜文件提取提示词，并调用AI翻译成英文
+│   ├── refine_shots_by_srt.py       # 【模块4】根据SRT字幕优化镜头时长，生成shots_base.txt和映射文件
+│   ├── fill_shot_attributes.py      # 【模块5】为镜头填充属性（标题、情绪、地域、视觉描述）
+│   ├── generate_first_frame_prompts.py # 【模块6】生成首帧提示词（用于图生视频）
+│   ├── align_videos.py              # 视频后处理：根据字幕映射对视频进行精确裁剪对齐
+│   ├── comfyui_manager.py           # ComfyUI API管理器，负责提交工作流、监控状态、下载视频，支持重试
+│   ├── audio_labeler.py             # 文本标签生成器，调用AI为口播稿添加[inhale]等语音标签
+│   ├── fish_tts.py                  # Fish S2语音合成模块，单段音频生成、参考音频文本提取
+│   ├── qwen_tts.py                  # 千问TTS模块，AI生成参考音频
+│   │
+│   └── 📁 audio/                    # 音频核心模块（重构后的模块化代码）
+│       ├── reference.py             # 模块1：参考音频管理器（上传、AI生成、转录、缓存）
+│       ├── segment_labeler.py       # 模块2：段落润色器（调用audio_labeler生成带标签的片段）
+│       ├── generation.py            # 模块3：音频生成控制器（队列、状态、重试、进度回调）
+│       ├── playback.py              # 模块4：播放控制器（封装pygame播放逻辑）
+│       ├── subtitle.py              # 模块5：字幕生成器（调用阿里云语音识别）
+│       ├── final_combine.py         # 模块6：最终音频合成器（合并片段，生成时间轴）
+│       └── loader.py                # 音频项目加载器（从工作目录加载段落、音频、缓存）
+│
+├── 🖥️ gui/                          # 图形界面模块（基于tkinter）
+│   ├── __init__.py
+│   ├── audio_panel.py               # 音频生成面板，集成音频模块1-6，提供UI控制
+│   ├── shot_editor.py               # 镜头编辑器，用于选择/编辑/ AI重写镜头提示词
+│   ├── story_wizard.py              # 故事创作向导，通过多步问答生成口播稿
+│   ├── simple_mode.py               # 一键成片模式界面
+│   ├── standard_mode.py             # 标准模式界面（人物、场景、大纲、口播稿四个标签页）
+│   ├── top_toolbar.py               # 顶部工具栏（故事标题、API Key、模型选择等）
+│   ├── countdown_timer.py           # 倒计时管理器
+│   ├── step_manager.py              # 步骤管理器，按顺序执行核心脚本（txt_to_json等）
+│   ├── workflow_executor.py         # 工作流执行器（调用comfyui_manager）
+│   ├── log_viewer.py                # 大窗口日志查看器
+│   ├── preset_manager.py            # 人设卡管理窗口
+│   ├── settings_dialog.py           # 参数设置对话框
+│   ├── common_widgets.py            # 通用UI组件（进度条、日志框）
+│   ├── ui_components.py             # 基础UI组件
+│   ├── tts_tutorial.py              # TTS教程文本常量
+│   │
+│   ├── 📁 audio/                    # 音频相关的UI子组件
+│   │   ├── retake_manager.py        # 重录管理器，处理音频重录请求和队列
+│   │   └── segment_list.py          # 段落列表组件
+│   │
+│   └── 📁 simple/                   # 一键成片模式的子组件
+│       ├── controller.py            # 控制器，协调数据与界面
+│       ├── data.py                  # 数据模型
+│       ├── story_tab.py             # 故事标签页
+│       ├── script_tab.py            # 剧本标签页
+│       ├── assets_tab.py            # 资产库标签页
+│       └── prompts_tab.py           # 提示词标签页
+│
+├── 📖 parsers/                      # 文本解析器（根据模式将文稿解析为结构）
+│   ├── __init__.py
+│   ├── base_parser.py               # 解析器基类
+│   ├── base_batch_parser.py         # 支持分批并发的解析器基类
+│   ├── analysis_parser.py           # 文明结构模式解析器（侧重宏观叙事）
+│   ├── story_parser.py              # 情感故事模式解析器
+│   ├── mime_parser.py               # 动画默剧模式解析器（待实现）
+│   ├── free_parser.py               # 自由模式解析器
+│   └── ai_response_cleaner.py       # AI响应清洗工具（修复JSON格式）
+│
+├── 🛠️ utils/                        # 工具函数模块
+│   ├── __init__.py
+│   ├── ai_utils.py                  # DeepSeek API调用基础函数
+│   ├── config_manager.py            # 配置管理器（API Key、模型、用户设置）
+│   ├── settings.py                  # 并发参数设置（GLOBAL_THRESHOLD, MAX_WORKERS等）
+│   ├── process_runner.py            # 子进程运行器，实时捕获输出
+│   ├── concurrent_utils.py          # 并发处理工具（线程池、分块）
+│   ├── subtitle_utils.py            # SRT字幕解析工具
+│   ├── translation_utils.py         # 翻译工具（调用DeepSeek）
+│   ├── audio_utils.py               # 音频工具（获取时长、ffmpeg路径）
+│   ├── aliyun_file_trans.py         # 阿里云语音识别（字幕生成）
+│   ├── error_logger.py              # 统一错误日志记录
+│   ├── system_doctor.py             # 系统诊断工具（分析错误日志）
+│   ├── story_to_script.py           # 根据故事生成口播稿
+│   ├── style_generator.py           # 根据故事生成风格人设卡
+│   ├── extract_persona_scene.py     # 从故事提取人物和场景设定
+│   ├── clean_subtitles.py           # 清洗字幕（与口播稿对齐）
+│   ├── align_video_duration.py      # 视频时长对齐（变速处理）
+│   ├── subtitle_generator.py        # 字幕生成（使用faster-whisper）
+│   ├── config.json                  # API Key配置文件（示例/默认）
+│   └── user_settings.json           # 用户参数配置文件
+│
+├── 📝 prompt_presets/               # 人设卡预设文件
+│   ├── civil_default.txt            # 文明结构模式默认人设卡
+│   ├── emotional_default.txt        # 情感故事模式默认人设卡
+│   ├── mime_default.txt             # 动画默剧模式默认人设卡
+│   ├── mime2.txt                    # 备用预设
+│   └── hardcore/                    # 深度历史稿预设
+│       └── 历史时政深度稿.txt         # 一个示例深度稿件
+│
+├── 🔧 workflow_templates/           # ComfyUI工作流模板文件
+│   ├── __init__.py
+│   ├── LTX2.3文生API.json           # LTX2.3文生视频模板
+│   ├── video_wan2_2_14B_t2v.json    # WAN2.2文生视频模板
+│   ├── FishS2Clone.json             # Fish S2语音克隆模板
+│   ├── QwenTTS.json                 # 千问TTS模板
+│   └── Wisper.json                  # Whisper语音识别模板
+│
+├── 📁 tools/                        # 第三方工具
+│   └── ffmpeg/                      # FFmpeg工具
+│       └── LICENSE.txt
+│
+├── 📁 examples/                     # 示例文件
+│   └── __init__.py
+│
+├── 📄 其他文件
+│   ├── project_snapshot.txt         # 项目快照文件（由snapshot.py生成）
+│   ├── snapshot.py                  # 项目快照生成脚本
+│   └── LTX2.3精准提示词.txt          # LTX2.3提示词模板记录文档
+│
+└── 📁 .vscode/                      # VSCode配置
+    ├── settings.json
+    └── tasks.json                   # Git自动提交任务

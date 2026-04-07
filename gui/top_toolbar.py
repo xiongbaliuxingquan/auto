@@ -58,27 +58,12 @@ class TopToolbar:
                                  values=["文生视频", "图生视频"], state="readonly", width=12)
         mode_menu.pack(side='left', padx=5)
 
-        # 右侧区域
+        # 右侧区域：只保留日志按钮和系统医生
         right_frame = tk.Frame(self.frame)
         right_frame.pack(side='right', padx=10)
 
-        tk.Label(right_frame, text="API Key:").pack(side='left')
-        self.api_key_entry = tk.Entry(right_frame, width=25, show='*')
-        self.api_key_entry.pack(side='left', padx=5)
-        self.api_key_entry.insert(0, self.app.api_key)
-
-        tk.Label(right_frame, text="模型:").pack(side='left')
-        self.model_combo = ttk.Combobox(right_frame, values=["deepseek-chat", "gpt-4"], width=12)
-        self.model_combo.pack(side='left', padx=5)
-        self.model_combo.set(self.app.model)
-
-        tk.Button(right_frame, text="保存配置", command=self.app.save_config).pack(side='left', padx=5)
-
         self.log_window_btn = tk.Button(right_frame, text="📄 大日志", command=self.app.log_viewer.show, width=8)
         self.log_window_btn.pack(side='left', padx=2)
-
-        self.doctor_btn = tk.Button(right_frame, text="系统医生", command=self.app.run_system_doctor, width=8)
-        self.doctor_btn.pack(side='left', padx=2)
 
     def on_slider_move(self, value):
         val = round(float(value))

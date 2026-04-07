@@ -152,12 +152,37 @@ def main():
 
     # 写入最终文件
     write_shots(output_shots, updated_shots)
+    # 生成 shot_subtitle_map.json
+    work_dir = os.path.dirname(output_shots)
+    map_path = os.path.join(work_dir, 'shot_subtitle_map.json')
+    
+    # 读取镜头真实时间文件（如果存在）
+    shot_times_path = os.path.join(work_dir, 'shot_times.json')
+    shot_times = []
+    if os.path.exists(shot_times_path):
+        with open(shot_times_path, 'r', encoding='utf-8') as f:
+            shot_times = json.load(f)
+        if len(shot_times) != len(updated_shots):
+            print(f"警告：镜头时间文件数量({len(shot_times)})与镜头数量({len(updated_shots)})不一致，将使用0")
+            shot_times = []
+    
+    shot_map = []
+    for idx, shot in enumerate(updated_shots):
+        start_ms = 0
+        end_ms = 0
+        if shot_times and idx < len(shot_times):
+            start_ms = shot_times[idx].get('start_ms', 0)
+            end_ms = shot_times[idx].get('end_ms', 0)
+        shot_map.append({
+            "shot_id": shot['id'],
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+            "target_duration_ms": int(shot['duration'] * 1000)
+        })
+    with open(map_path, 'w', encoding='utf-8') as f:
+        json.dump(shot_map, f, ensure_ascii=False, indent=2)
+    print(f"字幕映射文件已生成 {map_path}")
     print(f"完成，最终镜头数: {len(updated_shots)}，已保存至 {output_shots}")
-
-    # 可选：生成权威易读版文件（固定文件名）
-    readable_final = os.path.join(os.path.dirname(output_shots), "分镜结果_易读版_最终.txt")
-    shutil.copy2(output_shots, readable_final)
-    print(f"已生成权威易读版分镜文件至 {readable_final}")
 
 if __name__ == "__main__":
     main()

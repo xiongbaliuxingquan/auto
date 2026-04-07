@@ -31,20 +31,24 @@ RAW_RESPONSES_LOG = os.path.join(log_dir, "ai_raw_responses.log")
 
 DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
 if not DEEPSEEK_API_KEY:
-    raise ValueError("环境变量 DEEPSEEK_API_KEY 未设置，请在 GUI 中配置 API Key")
+    # 尝试从配置文件加载
+    api_key, _ = config_manager.load_config()
+    if api_key:
+        DEEPSEEK_API_KEY = api_key
+        os.environ['DEEPSEEK_API_KEY'] = api_key
+    else:
+        raise ValueError("环境变量 DEEPSEEK_API_KEY 未设置，请在 GUI 中配置 API Key")
 API_URL = "https://api.deepseek.com/v1/chat/completions"
 MODEL = "deepseek-chat"
 API_TIMEOUT = config_manager.API_TIMEOUT
-
+    
 # ========== PROMPT_TEMPLATE 已修改，移除了变量占位符 ==========
 PROMPT_TEMPLATE = """
-你是一位专业的视频分镜设计师。请为以下每个镜头生成：
-1. 分镜设计（用自然语言详细描述该镜头的画面、动作、切换等，需严格基于【视觉核心参考】）
-2. 视频提示词（必须严格基于【视觉核心参考】中的描述，并自然嵌入人物和场景的核心视觉特征）
+你是一位专业的视频分镜设计师。请为以下每个镜头生成视频提示词。
 
 ### 视频提示词要求 ###
 - 必须严格基于【视觉核心参考】中的描述生成视频提示词，可以丰富技术细节（如添加镜头运动、焦距、快门、防护条件等），但不得改变核心意象、风格、情绪和时代背景。
-- **重要：生成的视频提示词中，绝对禁止使用分号（; 或 ；）作为内部分隔符。并列内容请用逗号（,）或空格分隔。整个提示词必须是一个连续的字符串，中间不得出现分号。**
+- **重要：生成的视频提示词中，绝对禁止使用分号（; 或 ；）作为内部分隔符。并列内容请用逗号（,）分隔。整个提示词必须是一个连续的字符串，中间不得出现分号。**
 - 视频提示词采用结构化格式，每个部分用冒号分隔，顺序如下：
     【整体氛围】：一句话概括全局情绪、光线、时空。
     【场景】：详细地点、时间、环境，必须融合【场景设定】中的要素。**必须明确包含国家/地区信息（如“中国，汉朝”或“美国，现代”），严格根据【地域】字段填写。**
@@ -68,9 +72,6 @@ PROMPT_TEMPLATE = """
 对于每个输入的镜头，请按以下格式输出（镜头之间用 `===========================` 分隔）：
 
 【镜头段落ID-镜头序号：标题】
-- 时长：XX秒
-- 情绪基调：XX
-- 分镜设计：...
 - 提示词：...（按上述结构化格式）
 
 请严格按照此格式输出，每个镜头内容结束后单独一行 `===========================`。
@@ -115,6 +116,8 @@ def call_deepseek(prompt, shot_ids=None, max_retries=3, retry_delay=2):
                 sys.stdout.flush()
                 time.sleep(retry_delay)
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             elapsed = time.time() - start_time
             # 记录失败情况
             with open(API_STATS_LOG, 'a', encoding='utf-8') as f:
@@ -126,22 +129,48 @@ def call_deepseek(prompt, shot_ids=None, max_retries=3, retry_delay=2):
             sys.stdout.flush()
             time.sleep(retry_delay)
 
+def parse_shot_block(block, shot_id):
+    """
+    从 AI 返回的块中提取提示词。
+    返回 prompt 字符串。
+    """
+    prompt = ""
+    lines = block.strip().split('\n')
+    for line in lines:
+        line = line.strip()
+        if line.startswith('- 提示词：'):
+            prompt = line.split('：', 1)[-1].strip()
+        elif prompt and not line.startswith('-') and not line.startswith('【'):
+            # 提示词可能跨行，追加
+            prompt += ' ' + line
+    return prompt
+
 def process_batch(batch_segments, batch_index, persona_text):
+    # 构建 shot_id -> 原始镜头数据的映射
+    original_shot_map = {}
+    for seg in batch_segments:
+        for i, shot in enumerate(seg['shots'], start=1):
+            shot_id = f"{seg['id']}-{i}"
+            original_shot_map[shot_id] = {
+                'title': shot.get('title', ''),
+                'duration': shot.get('duration', 0.0),
+                'emotion': shot.get('emotion', ''),
+                'script': shot.get('script', ''),
+                'visual': shot.get('visual', '')   # 用于后备
+            }
     """
     batch_segments: 一个列表，包含本次要处理的分镜头，每个元素是一个分镜头（包含其所有子镜头）
+    返回 (text_block, shot_dicts)
     """
     prompt = f"""{persona_text}
 
 {PROMPT_TEMPLATE.format(total_shots_in_batch=sum(len(seg['shots']) for seg in batch_segments), len=len(batch_segments))}
 """
-    # 收集所有镜头ID用于日志
     shot_ids = []
-    shot_scripts = {}   # 新增
     for seg in batch_segments:
         for i, shot in enumerate(seg['shots'], start=1):
             shot_id = f"{seg['id']}-{i}"
             shot_ids.append(shot_id)
-            shot_scripts[shot_id] = shot.get('script', '')   # 新增
             region = shot.get('region', '全球')
             prompt += f"""
             【镜头{seg['id']}-{i}：{seg['title']}】
@@ -156,49 +185,80 @@ def process_batch(batch_segments, batch_index, persona_text):
         # 清洗结果中的分号
         result = result.replace('；', ',').replace(';', ',')
 
-        # 插入口播稿
+        # 解析所有镜头块
         blocks = re.split(r'\n\s*={5,}\s*\n', result.strip())
-        new_blocks = []
+        shot_dicts = []
         for idx, block in enumerate(blocks):
             if idx >= len(shot_ids):
-                new_blocks.append(block)
                 continue
             shot_id = shot_ids[idx]
-            script = shot_scripts.get(shot_id, '')
-            # 在块中插入口播稿行
-            lines = block.split('\n')
-            new_lines = []
-            inserted = False
-            for line in lines:
-                new_lines.append(line)
-                if not inserted and (line.startswith('- 情绪基调：') or line.startswith('- 时长：')):
-                    new_lines.append(f'- 口播稿：{script}')
-                    inserted = True
-            if not inserted:
-                new_lines.append(f'- 口播稿：{script}')
-            new_blocks.append('\n'.join(new_lines))
-        result = '\n===========================\n'.join(new_blocks)
+            # 从映射中获取原始数据
+            original = original_shot_map.get(shot_id)
+            if not original:
+                print(f"警告：未找到镜头 {shot_id} 的原始数据，跳过")
+                continue
 
-        return result
+            # 解析 AI 块，得到分镜设计和提示词
+            prompt_text = parse_shot_block(block, shot_id)
+
+            # 合并为完整镜头数据
+            full_shot = {
+                'id': shot_id,
+                'title': original['title'],
+                'duration': original['duration'],
+                'emotion': original['emotion'],
+                'script': original['script'],
+                'visual': original['visual'],   # 新增
+                'prompt': prompt_text
+            }
+            shot_dicts.append(full_shot)
+
+        # 重新组装文本块（保持原格式，用于调试）
+        new_blocks = []
+        for shot in shot_dicts:
+            block_text = f"""【镜头{shot['id']}：{shot['title']}】
+- 时长：{shot['duration']:.1f}秒
+- 情绪基调：{shot['emotion']}
+- 口播稿：{shot['script']}
+- 视觉描述：{shot['visual']}
+- 提示词：{shot['prompt']}"""
+            new_blocks.append(block_text)
+        text_block = '\n===========================\n'.join(new_blocks)
+
+        return text_block, shot_dicts
+
     except Exception as e:
-        error_msg = f"ERROR: 批次 {batch_index+1} (镜头 {', '.join(shot_ids)}) 处理失败: {str(e)}\n"
-        error_msg += f"Prompt 预览: {prompt[:200]}..."
-        print(error_msg)
+        import traceback
+        traceback.print_exc()
+        print(f"ERROR: 批次 {batch_index+1} (镜头 {', '.join(shot_ids)}) 处理失败: {str(e)}")
         sys.stdout.flush()
         log_error('auto_split_deepseek', f'批次{batch_index+1}处理失败', str(e))
 
         # 生成后备镜头文本块（基于原始数据）
         fallback_blocks = []
+        fallback_shot_dicts = []
         for seg in batch_segments:
             for i, shot in enumerate(seg['shots'], start=1):
                 shot_id = f"{seg['id']}-{i}"
-                fallback = f"""【镜头{shot_id}：{seg['title']}】
+                print(f"⚠️ 镜头 {shot_id} AI生成失败，使用原始视觉描述作为提示词")
+                fallback = f"""【镜头{shot_id}：{shot.get('title', seg['title'])}】
 - 时长：{shot['duration']:.1f}秒
 - 情绪基调：{shot['emotion']}
-- 分镜设计：AI生成失败，使用原始视觉描述：{shot['visual']}
+- 口播稿：{shot.get('script', '')}
+- 视觉描述：{shot.get('visual', '')}
 - 提示词：{shot['visual']}"""
                 fallback_blocks.append(fallback)
-        return '\n\n===========================\n\n'.join(fallback_blocks)
+                fallback_shot = {
+                    'id': shot_id,
+                    'title': shot.get('title', seg['title']),
+                    'duration': shot['duration'],
+                    'emotion': shot['emotion'],
+                    'script': shot.get('script', ''),
+                    'prompt': shot['visual']
+                }
+                fallback_shot_dicts.append(fallback_shot)
+        fallback_text = '\n\n===========================\n\n'.join(fallback_blocks)
+        return fallback_text, fallback_shot_dicts
 
 def progress_callback(idx, result, success):
     if success:
@@ -215,10 +275,10 @@ def parse_shots_file(shots_path, work_dir):
     解析 shots.txt 文件，返回分镜头列表。
     每个分镜头包含：
         id: 分镜头ID（整数）
-        title: 分镜头标题
-        shots: 子镜头列表，每个子镜头包含 visual, duration, emotion, region
+        title: 分镜头标题（取第一个镜头的标题）
+        shots: 子镜头列表，每个子镜头包含 title, visual, duration, emotion, region, script
     """
-    segments = []  # 存储分镜头
+    segments = []
     current_seg = None
     # 读取原始文稿作为后备视觉描述源
     original_paragraphs = []
@@ -230,38 +290,37 @@ def parse_shots_file(shots_path, work_dir):
         if basename not in exclude and not basename.startswith('prompts_') and not basename.startswith('分镜结果_'):
             with open(f, 'r', encoding='utf-8') as fp:
                 content = fp.read()
-            # 按空行分割自然段落
             original_paragraphs = [p.strip() for p in re.split(r'\n\s*\n', content) if p.strip()]
             break
     if not original_paragraphs:
         print("警告：未找到原始文稿文件，视觉描述将无法从原文后备")
         sys.stdout.flush()
+
     with open(shots_path, 'r', encoding='utf-8') as f:
         lines = f.readlines()
     i = 0
     while i < len(lines):
         line = lines[i].strip()
         if line.startswith('【镜头') and '：' in line:
-            # 新分镜头的开始
             match = re.match(r'【镜头(\d+)-(\d+)：([^】]+)】', line)
             if match:
                 seg_id = int(match.group(1))
                 shot_id = int(match.group(2))
-                title = match.group(3)
-                # 如果是新的分镜头，初始化
+                shot_title = match.group(3).strip()
+                # 如果是新的分镜头，创建
                 if not current_seg or current_seg['id'] != seg_id:
                     if current_seg:
                         segments.append(current_seg)
                     current_seg = {
                         'id': seg_id,
-                        'title': title,
+                        'title': shot_title,   # 分镜头标题（用第一个镜头的标题）
                         'shots': []
                     }
                 # 读取本镜头的时长、情绪、地域、视觉描述
-                duration = 10
+                duration = 10.0
                 emotion = ""
                 region = "全球"
-                script = ""      # 新增
+                script = ""
                 visual = ""
                 i += 1
                 while i < len(lines) and not lines[i].strip().startswith('【镜头') and not lines[i].strip().startswith('==========================='):
@@ -278,16 +337,17 @@ def parse_shots_file(shots_path, work_dir):
                         script = subline.split('：', 1)[-1].strip()
                     elif subline.startswith('- 视觉描述：'):
                         visual = subline.split('：', 1)[-1].strip()
-                        if not visual and original_paragraphs and len(original_paragraphs) >= seg_id:
+                        if not visual and original_paragraphs and seg_id <= len(original_paragraphs):
                             visual = original_paragraphs[seg_id-1] + "（基于原文后备）"
                     i += 1
                 # 添加到当前分镜头的 shots 列表
                 current_seg['shots'].append({
+                    'title': shot_title,
                     'visual': visual,
                     'duration': duration,
                     'emotion': emotion,
                     'region': region,
-                    'script': script   # 新增
+                    'script': script
                 })
                 continue
         i += 1
@@ -397,8 +457,8 @@ if __name__ == "__main__":
     if errors:
         for idx, err in errors.items():
             log_error('auto_split_deepseek', f'批次{idx+1}并发失败', err)
-
-    # 构建 all_results，包含所有批次（无论成功失败）
+    # 收集所有镜头的结构化数据
+    all_shot_data = []
     all_results = []
     for i, res in enumerate(results):
         # 收集该批次的所有镜头ID
@@ -406,12 +466,102 @@ if __name__ == "__main__":
         for seg in batches[i]:
             for j, shot in enumerate(seg['shots'], start=1):
                 shot_ids.append(f"{seg['id']}-{j}")
+        # 处理返回结果（元组 (text_block, shot_dicts) 或 None）
+        if res is None:
+            text_block = "ERROR: 无返回内容"
+            shot_dicts = []
+        else:
+            text_block, shot_dicts = res
+        # 收集结构化数据
+        all_shot_data.extend(shot_dicts)
         batch_info = {
             "batch": i+1,
             "shots": shot_ids,
-            "content": res if res is not None else "ERROR: 无返回内容"
+            "content": text_block
         }
         all_results.append(batch_info)
+
+    # 检查六元素完整性并补全
+    missing_report = []
+    # 为了补全，需要从原始 segments 中获取视觉描述等
+    # 先构建一个映射：shot_id -> 原始视觉描述、时长等
+    original_map = {}
+    for seg in segments:
+        for j, shot in enumerate(seg['shots'], start=1):
+            shot_id = f"{seg['id']}-{j}"
+            original_map[shot_id] = {
+                'visual': shot.get('visual', ''),
+                'duration': shot.get('duration', 10.0),
+                'emotion': shot.get('emotion', ''),
+                'script': shot.get('script', '')
+            }
+
+    for shot in all_shot_data:
+        missing = []
+        if not shot['title']:
+            missing.append('标题')
+        if shot['duration'] == 0.0:
+            missing.append('时长')
+        if not shot['emotion']:
+            missing.append('情绪基调')
+        if not shot['script']:
+            missing.append('口播稿')
+        if not shot['prompt']:
+            missing.append('提示词')
+        if missing:
+            missing_report.append(f"{shot['id']} 缺少: {', '.join(missing)}")
+            # 补全缺失字段（从原始数据）
+            orig = original_map.get(shot['id'], {})
+            if shot['duration'] == 0.0:
+                shot['duration'] = orig.get('duration', 10.0)
+            if not shot['emotion']:
+                shot['emotion'] = orig.get('emotion', '中性')
+            if not shot['script']:
+                shot['script'] = orig.get('script', '')
+            if not shot['prompt']:
+                shot['prompt'] = orig.get('visual', '默认提示词')
+                print(f"⚠️ 镜头 {shot['id']} 提示词缺失，已用视觉描述填充，请检查并手动修改")
+    if missing_report:
+        print("\n[错误] 六元素检查发现缺失：")
+        for msg in missing_report:
+            print(f"   {msg}")
+        print("💡 提示：上述缺失字段已用默认值填充，建议在后续编辑中手动修正。")
+        sys.stdout.flush()
+
+    # 保存 JSON 结果（可选，保留原逻辑）
+    timestamp = datetime.now().strftime("%m%d_%H%M")
+    output_file = os.path.join(output_dir, f"output_{timestamp}.json")
+    # 这里可以保存 all_shot_data 或其他，但原逻辑是保存 batch 信息，我们保持原样，但添加一个 shot_data 副本
+    # 原 JSON 保存代码不变，我们额外保存一个 shot_data.json 用于调试
+    shot_data_file = os.path.join(output_dir, f"shot_data_{timestamp}.json")
+    with open(shot_data_file, 'w', encoding='utf-8') as f:
+        json.dump(all_shot_data, f, ensure_ascii=False, indent=2)
+    print(f"镜头结构化数据已保存至 {shot_data_file}")
+    sys.stdout.flush()
+
+    # 生成易读版分镜文件（基于结构化数据）
+    def format_shot(shot):
+        return f"""【镜头{shot['id']}：{shot['title']}】
+- 时长：{shot['duration']:.1f}秒
+- 情绪基调：{shot['emotion']}
+- 口播稿：{shot['script']}
+- 视觉描述：{shot['visual']}
+- 提示词：{shot['prompt']}"""
+
+    readable_parts = [format_shot(shot) for shot in all_shot_data]
+    readable_file = os.path.join(output_dir, f"分镜结果_易读版_{timestamp}.txt")
+    with open(readable_file, 'w', encoding='utf-8') as f:
+        f.write('\n\n===========================\n\n'.join(readable_parts))
+    print(f"易读版已生成：{readable_file}")
+    sys.stdout.flush()
+    # 生成易读版分镜文件后
+    if missing_report:
+        print("\n📌 注意：易读版中部分镜头使用了默认值，请检查并手动修改提示词。")
+        print("   你可以通过视频模块的「选择或编辑提示词」功能单独修改。")
+
+    if errors:
+        for idx, err in errors.items():
+            log_error('auto_split_deepseek', f'批次{idx+1}并发失败', err)
 
     timestamp = datetime.now().strftime("%m%d_%H%M")
     output_file = os.path.join(output_dir, f"output_{timestamp}.json")
@@ -423,27 +573,3 @@ if __name__ == "__main__":
         }, f, ensure_ascii=False, indent=2)
     print(f"\nJSON结果已保存至 {output_file}")
     sys.stdout.flush()
-
-    # 生成易读版分镜文件（只包含成功批次，去掉分隔线）
-    readable_parts = []
-    for res in all_results:
-        content = res.get('content', '')
-        if content and not content.startswith("ERROR:"):
-            readable_parts.append(content)
-    def format_duration_in_text(text):
-        """将文本中的 '- 时长：X.X秒' 统一为一位小数格式"""
-        def repl(m):
-            val = float(m.group(1))
-            return f"- 时长：{val:.1f}秒"
-        return re.sub(r'- 时长：\s*([\d.]+)\s*秒', repl, text)
-    if readable_parts:
-        # 统一格式化时长
-        formatted_parts = [format_duration_in_text(part) for part in readable_parts]
-        readable_file = os.path.join(output_dir, f"分镜结果_易读版_{timestamp}.txt")
-        with open(readable_file, 'w', encoding='utf-8') as f:
-            f.write('\n\n'.join(formatted_parts))
-        print(f"易读版已生成：{readable_file}")
-        sys.stdout.flush()
-    else:
-        print("没有成功生成的批次，未生成易读版文件")
-        sys.stdout.flush()
