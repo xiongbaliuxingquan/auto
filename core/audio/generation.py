@@ -245,7 +245,8 @@ class AudioGenerationController:
                     output_dir=self.work_dir,
                     ref_audio_filename=self.ref_audio_filename,
                     ref_text=self.ref_text,
-                    language=self.language
+                    language=self.language,
+                    log_callback=self.log
                 )
                 if audio_path:
                     # 等待文件写入完成

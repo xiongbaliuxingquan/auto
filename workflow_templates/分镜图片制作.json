@@ -1,0 +1,287 @@
+{
+  "1": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "K采样器选择"
+    }
+  },
+  "2": {
+    "inputs": {
+      "noise_seed": 301234988042725
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "随机噪波"
+    }
+  },
+  "3": {
+    "inputs": {
+      "cfg": 1,
+      "model": [
+        "23",
+        0
+      ],
+      "positive": [
+        "15",
+        0
+      ],
+      "negative": [
+        "17",
+        0
+      ]
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFG引导器"
+    }
+  },
+  "4": {
+    "inputs": {
+      "noise": [
+        "2",
+        0
+      ],
+      "guider": [
+        "3",
+        0
+      ],
+      "sampler": [
+        "1",
+        0
+      ],
+      "sigmas": [
+        "30",
+        0
+      ],
+      "latent_image": [
+        "18",
+        0
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "自定义采样器（高级）"
+    }
+  },
+  "12": {
+    "inputs": {
+      "pixels": [
+        "29",
+        0
+      ],
+      "vae": [
+        "25",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE编码"
+    }
+  },
+  "15": {
+    "inputs": {
+      "conditioning": [
+        "22",
+        0
+      ],
+      "latent": [
+        "12",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "参考Latent"
+    }
+  },
+  "17": {
+    "inputs": {
+      "conditioning": [
+        "19",
+        0
+      ],
+      "latent": [
+        "12",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "参考Latent"
+    }
+  },
+  "18": {
+    "inputs": {
+      "width": 1920,
+      "height": 1280,
+      "batch_size": 1
+    },
+    "class_type": "EmptyFlux2LatentImage",
+    "_meta": {
+      "title": "空Latent图像（Flux2）"
+    }
+  },
+  "19": {
+    "inputs": {
+      "text": "LOGO,水印，字幕，中文字幕，blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, wrong hand count, artifacts around text, unreadable text on shirt or hat, incorrect lettering on cap (“PNTR”), incorrect t-shirt slogan (“JUST DO IT”), missing microphone, misplaced microphone, inconsistent perspective, camera shake, incorrect depth of field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, smiling, laughing, exaggerated sadness, wrong gaze direction, eyes looking at camera, mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, off-sync audio, missing sniff sounds, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, missing door or shelves, missing shallow depth of field, flat lighting, inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts.",
+      "clip": [
+        "24",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP文本编码"
+    }
+  },
+  "20": {
+    "inputs": {
+      "samples": [
+        "4",
+        0
+      ],
+      "vae": [
+        "25",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE解码"
+    }
+  },
+  "21": {
+    "inputs": {
+      "image": "ComfyUI_00158_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载图像"
+    }
+  },
+  "22": {
+    "inputs": {
+      "text": [
+        "35",
+        0
+      ],
+      "clip": [
+        "24",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP文本编码"
+    }
+  },
+  "23": {
+    "inputs": {
+      "unet_name": "flux/flux-2-klein-9b-fp8.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "UNet加载器"
+    }
+  },
+  "24": {
+    "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "加载CLIP"
+    }
+  },
+  "25": {
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "加载VAE"
+    }
+  },
+  "27": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "20",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "保存图像"
+    }
+  },
+  "29": {
+    "inputs": {
+      "aspect_ratio": "original",
+      "proportional_width": 1,
+      "proportional_height": 1,
+      "fit": "letterbox",
+      "method": "lanczos",
+      "round_to_multiple": "8",
+      "scale_to_side": "longest",
+      "scale_to_length": 1920,
+      "background_color": "#000000",
+      "image": [
+        "21",
+        0
+      ]
+    },
+    "class_type": "LayerUtility: ImageScaleByAspectRatio V2",
+    "_meta": {
+      "title": "图层工具：按宽高比缩放 V2"
+    }
+  },
+  "30": {
+    "inputs": {
+      "steps": 4,
+      "width": [
+        "34",
+        0
+      ],
+      "height": [
+        "34",
+        1
+      ]
+    },
+    "class_type": "Flux2Scheduler",
+    "_meta": {
+      "title": "Flux2调度器"
+    }
+  },
+  "34": {
+    "inputs": {
+      "image": [
+        "29",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "获取图像尺寸"
+    }
+  },
+  "35": {
+    "inputs": {
+      "prompt": "prefixNext Scene：1) 全景/逆光 :: 红金色战甲的钢铁侠在荒漠峡谷上空高速俯冲，阳光从山脊后方洒落，勾勒出他流线型装甲的金属光泽 :: 激烈，高对比\nNext Scene：2) 推进/特写 :: 镜头急速推进至钢铁侠胸口反应堆，金色能量核心在装甲内脉动，光芒映亮他紧绷的下颌线条 :: 动能爆发，机械美学\nNext Scene：3) 特写/环境 :: 身后风沙卷起，扬起细小颗粒在镜头前划出模糊轨迹，钢铁侠的面罩边缘被风刮起一道微小裂痕 :: 物理冲击，动态风效\nNext Scene：4) 中景/反应 :: 钢铁侠猛然扭头，右臂肌肉绷紧，手掌张开如抓握虚空，眼中红光闪烁，准备迎击未知威胁 :: 战斗启动，肌肉张力\nNext Scene：5) 环绕镜头/动态 :: 镜头环绕钢铁侠，他双腿蹬踏，装甲在空中划出高速弧线，尾部喷气口喷射出炽热气流 :: 速度流动，轨迹美学\nNext Scene：6) 极近特写/高潮 :: 钢铁侠右掌猛然拍击，装甲表面迸裂出金色火花，能量束从指缝中爆发，照亮前方沙丘 :: 战斗爆发，能量特效\nNext Scene：7) 过肩镜头/视线 :: 从钢铁侠肩后望去，沙丘上突然浮现出一道暗红色能量裂痕，地面开始扭曲并裂开一道深沟 :: 环境反馈，危机降临\nNext Scene：8) 远景/局部 :: 裂痕边缘的沙粒被能量灼烧成灰烬，散落的金属碎屑在风中飘舞，形成一道闪烁的金色轨迹 :: 细节残影，破坏痕迹\nNext Scene：9) 大远景/拉高 :: 钢铁侠腾空跃起，装甲在阳光下反射出耀眼红金，他化作一道剪影掠过峡谷，消失在地平线尽头的云层中 :: 速度终结，空间感suffix",
+      "start_index": 0,
+      "max_rows": 1000,
+      "remove_empty_lines": true
+    },
+    "class_type": "easy promptLine",
+    "_meta": {
+      "title": "提示词行"
+    }
+  }
+}

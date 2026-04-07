@@ -82,7 +82,6 @@ class ComfyUIManager:
             if match:
                 shot_id = match.group(1)
                 title = match.group(2).rstrip('】)').strip()
-                print(f"解析到镜头: {shot_id}")   # 添加这一行
             else:
                 # 如果仍不匹配，尝试旧格式（严格中文括号）
                 match = re.match(r'【镜头(\d+-\d+)：([^】]+)】', line)
@@ -142,7 +141,6 @@ class ComfyUIManager:
                 'visual': visual   # 新增这一行
             })
 
-        print(f"找到 {len(shots)} 个镜头")
         return shots
 
     def download_video(self, output_info, save_path):
@@ -164,12 +162,8 @@ class ComfyUIManager:
 
         self._log(f"下载 URL: {url}")
 
-        base, ext = os.path.splitext(save_path)
         final_path = save_path
-        counter = 1
-        while os.path.exists(final_path):
-            final_path = f"{base}_{counter}{ext}"
-            counter += 1
+        # 直接覆盖，不检查存在性
         self._log(f"目标文件: {final_path}")
 
         try:
@@ -489,7 +483,6 @@ class ComfyUIManager:
         if not failed_shots:
             self._log("所有镜头生成成功，无需重试")
             self._write_manifest(manifest, output_dir)
-            self._append_video_info_to_readable(work_dir, manifest)
             return True, f"成功 {success_count}/{len(shots_to_generate)}"
 
         # ---------- 第二阶段：重试 ----------

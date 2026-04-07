@@ -4,6 +4,7 @@ from tkinter import ttk, messagebox
 import os
 import glob
 import re
+import json  # 添加缺失的导入
 
 class VideoTab:
     def __init__(self, parent, controller, app):
@@ -11,6 +12,7 @@ class VideoTab:
         self.app = app
         self.frame = tk.Frame(parent)
         self.work_dir = None
+        self.video_dir = None  # 明确初始化
         self.shots = []  # 存储每个镜头的完整信息
 
         # 表格
@@ -62,13 +64,8 @@ class VideoTab:
 
     def set_work_dir(self, work_dir):
         self.work_dir = work_dir
-        # 尝试查找已有的视频文件夹（用于历史项目）
-        import glob
-        video_dirs = glob.glob(os.path.join(work_dir, "视频"))
-        if video_dirs:
-            self.video_dir = max(video_dirs, key=os.path.getmtime)
-        else:
-            self.video_dir = None
+        # 直接设置为工作目录下的“视频”文件夹
+        self.video_dir = os.path.join(work_dir, "视频")
         self.refresh_video_list()
 
     def _get_shot_description(self, shot_id):
@@ -81,76 +78,75 @@ class VideoTab:
         shots_info = self._parse_readable_file(readable_file)
         for shot in shots_info:
             if shot['id'] == shot_id:
-                return shot['visual'][:60]  # 截取前60字
+                return shot['visual'][:60]
         return ""
 
     def _scan_video_files(self):
-        """降级方案：直接扫描视频文件夹中的文件（无 manifest 时使用）"""
-        self.tree.delete(*self.tree.get_children())
-        shots_info = self._parse_readable_file(self._get_latest_readable())
+            # 清空表格
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        # 获取易读版文件
+        readable_path = self._get_latest_readable()
+        if not readable_path:
+            self.app.log("[ERROR] 未找到易读版分镜文件")
+            self.tree.insert('', 'end', values=('', '未找到易读版分镜文件', ''))
+            return
+        
+        shots_info = self._parse_readable_file(readable_path)
+        if not shots_info:
+            self.app.log("[ERROR] 解析易读版文件失败，无镜头信息")
+            self.tree.insert('', 'end', values=('', '解析易读版文件失败', ''))
+            return
+        
+        # 扫描视频文件
         video_files = {}
-        for f in os.listdir(self.video_dir):
-            if f.startswith("镜头") and (f.endswith(".mp4") or f.endswith(".gif")):
-                shot_id = f[2:].rsplit('.', 1)[0]
-                video_files[shot_id] = os.path.join(self.video_dir, f)
+        if os.path.isdir(self.video_dir):
+            for f in os.listdir(self.video_dir):
+                if f.startswith("镜头") and (f.endswith(".mp4") or f.endswith(".gif")):
+                    shot_id = f[2:].rsplit('.', 1)[0]
+                    video_files[shot_id] = os.path.join(self.video_dir, f)
+        
         self.shots = []
         for shot in shots_info:
             shot_id = shot['id']
             description = shot.get('visual', '')[:60]
             video_path = video_files.get(shot_id)
-            status = "已生成" if video_path else "待生成"
+            exists = video_path is not None and os.path.exists(video_path)
+            status = "已生成" if exists else "待生成"
             self.shots.append({
                 'id': shot_id,
                 'description': description,
-                'video_path': video_path,
+                'video_path': video_path if exists else None,
                 'status': status
             })
             self.tree.insert('', 'end', values=(shot_id, description, status))
 
     def _get_latest_readable(self):
+        if not self.work_dir:
+            return None
         pattern = os.path.join(self.work_dir, "分镜结果_易读版_*.txt")
         files = glob.glob(pattern)
         return max(files, key=os.path.getmtime) if files else None
 
     def refresh_video_list(self):
-        # 如果 video_dir 属性不存在或未设置，直接返回
+        # 检查 video_dir 是否存在
         if not hasattr(self, 'video_dir') or self.video_dir is None:
             return
         if not os.path.isdir(self.video_dir):
-            # 清空表格并显示提示
             for item in self.tree.get_children():
                 self.tree.delete(item)
             self.tree.insert('', 'end', values=('', '未找到视频文件夹', ''))
             return
-        # 清空表格
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-        if not self.video_dir or not os.path.isdir(self.video_dir):
-            return
-        manifest_path = os.path.join(self.video_dir, "video_manifest.json")
-        if not os.path.exists(manifest_path):
-            self._scan_video_files()
-            return
-        with open(manifest_path, 'r', encoding='utf-8') as f:
-            manifest = json.load(f)
-        self.shots = []
-        for item in manifest:
-            if item is None:
-                continue
-            shot_id = item['id']
-            video_path = os.path.join(self.video_dir, item['file'])
-            description = self._get_shot_description(shot_id)
-            status = "已生成" if os.path.exists(video_path) else "待生成"
-            self.shots.append({
-                'id': shot_id,
-                'description': description,
-                'video_path': video_path if os.path.exists(video_path) else None,
-                'status': status
-            })
-            self.tree.insert('', 'end', values=(shot_id, description, status))
+
+        # 直接扫描文件夹，不依赖 manifest
+        self._scan_video_files()
+
     def _parse_readable_file(self, readable_path):
         """解析易读版分镜文件，返回镜头列表，每个镜头包含 id, visual"""
         shots = []
+        if not readable_path or not os.path.exists(readable_path):
+            return shots
         with open(readable_path, 'r', encoding='utf-8') as f:
             content = f.read()
         blocks = re.split(r'\n\s*={5,}\s*\n', content.strip())
@@ -161,14 +157,12 @@ class VideoTab:
             if not header_match:
                 continue
             shot_id = header_match.group(1)
-            # 提取视觉描述
             visual_match = re.search(r'- 视觉描述：\s*(.*?)(?=\n-|\Z)', block, re.DOTALL)
             visual = visual_match.group(1).strip() if visual_match else ""
             shots.append({'id': shot_id, 'visual': visual})
         return shots
 
     def on_select(self, event):
-        """选中某行时启用预览和重试按钮"""
         selection = self.tree.selection()
         if selection:
             self.preview_btn.config(state='normal')
@@ -178,7 +172,6 @@ class VideoTab:
             self.retake_btn.config(state='disabled')
 
     def preview_shot(self):
-        """预览当前选中的镜头视频"""
         selection = self.tree.selection()
         if not selection:
             return
@@ -187,13 +180,13 @@ class VideoTab:
             return
         shot = self.shots[index]
         if shot['video_path'] and os.path.exists(shot['video_path']):
-            # 使用系统默认播放器打开
             os.startfile(shot['video_path'])
         else:
-            messagebox.showwarning("提示", f"镜头 {shot['id']} 未找到视频文件")
+            # 文件不存在，提示并刷新列表
+            messagebox.showwarning("提示", f"镜头 {shot['id']} 视频文件不存在，可能已被移动或删除。\n请尝试点击「刷新」按钮。")
+            self.refresh_video_list()
 
     def retake_shot(self):
-        """重试生成当前选中的镜头"""
         selection = self.tree.selection()
         if not selection:
             return
@@ -203,14 +196,15 @@ class VideoTab:
         shot = self.shots[index]
         if not shot['id']:
             return
-        # 调用控制器的重试方法
         if hasattr(self.controller, 'retake_single_shot'):
             self.controller.retake_single_shot(shot['id'])
         else:
             messagebox.showwarning("提示", "重试功能未实现")
 
     def on_video_generated(self, shot_id):
-        """当镜头生成完成时调用，刷新列表（带防抖）"""
         if hasattr(self, '_refresh_after_id'):
             self.frame.after_cancel(self._refresh_after_id)
-        self._refresh_after_id = self.frame.after(500, self.refresh_video_list)
+        # 立即刷新一次
+        self.refresh_video_list()
+        # 延迟再刷新一次，确保文件系统同步
+        self._refresh_after_id = self.frame.after(1000, self.refresh_video_list)

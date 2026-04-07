@@ -954,7 +954,11 @@ class AudioPanel(ttk.Frame):
             return
         pos_ms = self.progress_scale.get()
         pos_sec = pos_ms / 1000.0
+        # 强制设置播放位置
         self.playback.seek(pos_sec)
+        # 立即更新进度条显示，防止弹回
+        self.progress_scale.set(pos_ms)
+        self.time_label.config(text=f"{self._format_time(pos_sec)} / {self._format_time(self.playback.current_total_duration)}")
 
     def _format_time(self, seconds):
         minutes = int(seconds // 60)

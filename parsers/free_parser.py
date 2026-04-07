@@ -39,6 +39,16 @@ class FreeParser(BaseParser):
         self.work_dir = work_dir
         self.log_callback = log_callback
         self.verbose = verbose
+        # 提取目标时长（分钟）
+        self.target_duration_minutes = 5  # 默认5分钟
+        if metadata and "目标时长" in metadata:
+            dur_str = str(metadata["目标时长"])
+            match = re.search(r'(\d+)', dur_str)
+            if match:
+                self.target_duration_minutes = int(match.group(1))
+            # 删除 self.log 这一行，改为下面这样（可选）
+            if log_callback:
+                log_callback(f"目标总时长: {self.target_duration_minutes} 分钟")
 
         def log(msg, level='info'):
             if self.log_callback:
@@ -90,7 +100,7 @@ class FreeParser(BaseParser):
 
         # 提取并保存全局资产库文本
         global_pattern = re.compile(r'【全局资产库】\s*(.*?)(?=\n\s*【段落 \d+】|\Z)', re.DOTALL)
-        global_match = global_pattern.search(result)
+        global_match = global_pattern.search(str(result))
         if global_match:
             self.global_assets_text = global_match.group(1).strip()
             if self.work_dir:
@@ -101,7 +111,7 @@ class FreeParser(BaseParser):
             self.global_assets_text = ""
 
         # 按段落分割，提取每个段落的文本和局部资产文本
-        blocks = re.split(r'\n\s*【段落 \d+】\s*\n', result)
+        blocks = re.split(r'\n\s*【段落 \d+】\s*\n', str(result))
         paragraphs = []
         para_idx = 1
         for block in blocks:
@@ -147,7 +157,7 @@ class FreeParser(BaseParser):
         # 提取目标时长（分钟）
         target_duration_min = 0
         if meta and "目标时长" in meta:
-            dur_str = meta["目标时长"]
+            dur_str = str(meta["目标时长"])   # 改为 str()
             # 假设格式为 "5分钟" 或 "5"
             match = re.search(r'(\d+)', dur_str)
             if match:
@@ -173,11 +183,13 @@ class FreeParser(BaseParser):
 
    **重要：角色固定属性必须严格按照以下格式输出，每个字段都要包含，且描述必须明确、肯定，不得使用“或”等模棱两可的词语。性别字段只能为“男”或“女”。如果原文没有明确，请根据上下文推断最可能的一种，并直接写出。**
    格式：
-   【角色名】 性别：X，年龄：X，发型：X，发色：X，脸型：X，身高：X，体型：X，惯用着装：X，气质描述：X。
+   【种族 角色名】 性别：X，年龄：X，发型：X，发色：X，脸型：X，身高：X，体型：X，惯用着装：X，气质描述：X。
+   注意：种族可以是“人类”、“熊猫”、“机器人”、“精灵”等，必须写在角色名前面，用空格分隔。
 
    示例：
    - 角色固定属性：
-     【阿铁】 性别：男，年龄：少年，发型：短发，发色：黑，脸型：圆脸，身高：中等，体型：瘦削，惯用着装：深色短打工匠服，气质描述：坚韧、热血、对锻造充满纯粹热爱。
+     【人类 阿铁】 性别：男，年龄：少年，发型：短发，发色：黑，脸型：圆脸，身高：中等，体型：瘦削，惯用着装：深色短打工匠服，气质描述：坚韧、热血、对锻造充满纯粹热爱。
+     【熊猫 阿六】 性别：男，年龄：青年，发型：短圆耳，发色：黑白相间，脸型：圆脸，身高：中等，体型：圆润敦实，惯用着装：磨损的深色背带工装裤，肩部有简易护甲，左前肢为机械义肢，佩戴护目镜，气质描述：沉稳、坚韧、沉默中带着不容动摇的执着。
 
 3. 为每个段落提取局部资产库：该段落的场景、角色服装变化、道具、当前情绪、时间、地域等。局部资产也用文本列表形式，每个资产项以“- 键：值”格式输出。
 
@@ -188,10 +200,10 @@ class FreeParser(BaseParser):
 【全局资产库】
 - 整体视觉风格：...
 - 角色固定属性：
-  【角色名】 性别：...，年龄：...，发型：...，发色：...，脸型：...，身高：...，体型：...，惯用着装：...，气质描述：...
+  【种族 角色名】 种族：...，性别：...，年龄：...，发型：...，发色：...，脸型：...，身高：...，体型：...，惯用着装：...，气质描述：...
 
-【段落 1】
-段落文本内容...
+【段落 X】
+段落文本内容...（注意：提及角色时必须使用完整名称，如“熊猫阿六”）
 
 【局部资产】
 - 场景：具体场景描述
@@ -206,6 +218,7 @@ class FreeParser(BaseParser):
 - 段落之间用空行分隔。
 - 局部资产中的键名固定为：场景、角色服装、道具、时间、地域、情绪、建议时长。如果某个资产不存在，可以不写。
 - 角色服装可以是多个角色的描述，用分号分隔。
+- 在所有输出中，提及角色时必须使用“种族+名字”的完整形式，例如“熊猫阿六”，不得省略种族。
 
 故事内容：
 {raw_text}
@@ -223,13 +236,13 @@ class FreeParser(BaseParser):
             if idx > 0:
                 prev_text = paragraphs_with_assets[idx-1]['text']
                 prev_summary = prev_text[:100] + "..." if len(prev_text) > 100 else prev_text
-            tasks.append((idx, p['text'], p['local_assets_text'], prev_summary, p.get('suggested_duration', 0)))
+            tasks.append((idx, p['text'], p['local_assets_text'], prev_summary, p.get('suggested_duration', 0), self.target_duration_minutes))
 
         results = [None] * total
         with concurrent.futures.ThreadPoolExecutor(max_workers=settings.MAX_WORKERS) as executor:
             future_to_idx = {
-                executor.submit(self._generate_script_for_paragraph, idx, text, local_assets, prev_summary, suggested_duration, log): idx
-                for idx, text, local_assets, prev_summary, suggested_duration in tasks
+                executor.submit(self._generate_script_for_paragraph, idx, text, local_assets, prev_summary, suggested_duration, target_duration_minutes, log): idx
+                for idx, text, local_assets, prev_summary, suggested_duration, target_duration_minutes in tasks
             }
             for future in concurrent.futures.as_completed(future_to_idx):
                 idx = future_to_idx[future]
@@ -256,10 +269,10 @@ class FreeParser(BaseParser):
                     log(f"段落 {i+1} 使用后备场次")
         return all_scenes
 
-    def _generate_script_for_paragraph(self, idx: int, text: str, local_assets_text: str, prev_summary: str, suggested_duration: int, log) -> Dict:
+    def _generate_script_for_paragraph(self, idx: int, text: str, local_assets_text: str, prev_summary: str, suggested_duration: int, target_duration_minutes: int, log) -> Dict:
         """为单个段落生成场次数据"""
         paragraph_index = idx + 1  # 1-based，用于镜头编号
-        prompt = self._build_paragraph_prompt(text, local_assets_text, prev_summary, paragraph_index, suggested_duration)
+        prompt = self._build_paragraph_prompt(text, local_assets_text, prev_summary, paragraph_index, suggested_duration, target_duration_minutes)
         try:
             if log:
                 log(f"段落 {paragraph_index} 正在调用剧本AI...")
@@ -279,8 +292,15 @@ class FreeParser(BaseParser):
             shot['paragraph_index'] = idx
         return scene
 
-    def _build_paragraph_prompt(self, text: str, local_assets_text: str, prev_summary: str, paragraph_index: int, suggested_duration: int = 0) -> str:
+    def _build_paragraph_prompt(self, text: str, local_assets_text: str, prev_summary: str, paragraph_index: int, suggested_duration: int = 0, target_duration_minutes: int = 5) -> str:
         """构建单个段落的剧本生成提示词（纯文本输出）"""
+        # 计算整个故事的总字数上限（中文约 200 字/分钟）
+        max_total_chars = target_duration_minutes * 200
+        
+        global_duration_instruction = f"""
+**重要：整个故事的目标总时长为 {target_duration_minutes} 分钟，因此所有段落的旁白/对白总字数不应超过 {max_total_chars} 字。**
+请你在生成以下段落的分镜头剧本时，严格遵循这一总字数限制，合理分配本段落的旁白/对白字数。如果本段落分配的字数过多，请精简文本。
+"""
         meta = self.metadata
         meta_text = ""
         if meta:
@@ -305,16 +325,19 @@ class FreeParser(BaseParser):
 """
 
         dialogue_rule = """
-**对白与时长匹配规则**：
-- 中文对白/旁白：按平均语速每秒约3-4个字估算。例如，一句10个字的对白，至少需要3秒。
-- 请根据每个镜头的对白/旁白字数，合理设置该镜头的时长，确保朗读完整不仓促。
-- 如果某个镜头需要较长的对白，请适当增加时长（但不超过15秒），或者拆分对白到多个镜头。
+【对白与时长匹配规则】（必须严格遵守）
+- 中文对白/旁白：按平均语速 3.5 字/秒 计算所需最小秒数。
+- 公式：最小时长 = ceil(对白/旁白总字数 / 3.5)
+- 每个镜头的最终时长必须 >= 最小时长，且不超过 15 秒。
+- 如果某个镜头的对白/旁白为空，时长可在 5-15 秒之间自由分配。
+- 示例：对白“你好吗”（3字）→ 最小时长 1 秒，但镜头时长应至少 5 秒；对白“这是一句很长的旁白，大约有二十八个字”（28字）→ 最小时长 8 秒，则镜头时长必须 >=8 秒。
 """
 
         prompt = f"""
 你是一位专业的影视编剧。请根据以下信息，为这一段故事生成分镜头剧本。注意：镜头编号格式为“【镜头{paragraph_index}-{{序号}}：标题】”。
 
 {meta_text}
+{global_duration_instruction}   # 新增
 【全局资产库】（角色固定属性、整体风格）
 {global_text}
 
@@ -334,11 +357,11 @@ class FreeParser(BaseParser):
 
 【镜头{paragraph_index}-1：标题】
 - 场景：地点，时间，环境
-- 角色：本镜头出现的角色列表（可多个）
+- 角色：本镜头出现的角色列表，必须使用完整名称（种族+名字），例如“熊猫阿六”、“人类李雷”。可多个，用逗号分隔。
 - 动作：人物的具体动作描述
 - 对白：角色A：“台词” / 角色B：“台词” （多个对白用 / 分隔）
 - 视觉描述：关键画面描述，包括光影、色调、氛围等
-- 时长：X秒（必须为5-15之间的整数或小数，如8.0）
+- 时长：X秒（必须满足上述对白时长规则，且范围 5-15 秒）
 - 情绪基调：XX
 - 地域：国家·时代（例如“中国·唐朝”或“全球·无明确时代”）
 
@@ -350,13 +373,14 @@ class FreeParser(BaseParser):
 - 输出中不要有任何额外解释，只输出镜头块。
 - 如果局部资产中提到了特定服装、道具，请在镜头中体现。
 - 请根据对白字数合理设置时长，避免旁白念不完。
+**重要：请严格按照对白时长规则计算每个镜头的时长，确保旁白/对白能够完整朗读，不得过短。**
 """
         return prompt
 
     def _parse_single_scene(self, text: str, paragraph_index: int) -> Optional[Dict]:
         """解析单个段落的镜头块，返回场次字典"""
         # 直接解析镜头块，不依赖场次标题
-        shot_blocks = re.split(r'\n\s*【镜头\d+-\d+：', text)
+        shot_blocks = re.split(r'\n\s*【镜头\d+-\d+：', str(text))
         shots = []
         for block in shot_blocks:
             if not block.strip():
@@ -462,7 +486,7 @@ class FreeParser(BaseParser):
 
     def _parse_script(self, text: str) -> List[Dict]:
         scenes = []
-        scene_blocks = re.split(r'\n\s*【场次[^】]+：', text)
+        scene_blocks = re.split(r'\n\s*【场次[^】]+：', str(text))
         for block in scene_blocks:
             if not block.strip():
                 continue

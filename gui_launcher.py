@@ -85,6 +85,7 @@ class App:
         # 顶部工具栏
         self.toolbar = TopToolbar(self.root, self)
         self.toolbar.pack(fill='x', padx=5, pady=5)
+        self.toolbar.mode_var.trace('w', self.on_video_mode_change)
 
         # 主布局：侧边栏 + 内容区
         main_paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
@@ -160,6 +161,33 @@ class App:
         # 绑定模式切换事件
         self.toolbar.mode_type_var.trace('w', lambda *args: self.on_mode_type_change())
         self.toolbar.text_type_var.trace('w', lambda *args: self._update_preset_label())
+        self.toolbar.mode_var.trace('w', self.on_video_mode_change)
+
+        self._resize_timer = None
+        self.root.bind('<Configure>', self._on_window_configure)
+        self.root.bind('<ButtonRelease-1>', self._on_window_release)
+
+    def _on_window_configure(self, event):
+        if event.widget == self.root:  # 仅根窗口
+            if self._resize_timer:
+                self.root.after_cancel(self._resize_timer)
+            self._resize_timer = self.root.after(200, self._delayed_refresh)
+
+    def _on_window_release(self, event):
+        if self._resize_timer:
+            self.root.after_cancel(self._resize_timer)
+        self._delayed_refresh()
+
+    def _delayed_refresh(self):
+        self.root.update_idletasks()
+        # 如果有 canvas 需要刷新滚动区域，可以调用
+        # 例如：self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def on_video_mode_change(self, *args):
+        """当视频模式（文生/图生）改变时，如果当前是一键成片模式，则通知 simple_mode 切换"""
+        if self.toolbar.mode_type_var.get() == "一键成片":
+            is_i2v = (self.toolbar.mode_var.get() == "图生视频")
+            self.simple_mode.set_i2v_mode(is_i2v)
 
     def register_video_generation_callback(self, callback):
         """注册视频生成回调，当有镜头生成时调用"""
@@ -394,39 +422,14 @@ class App:
         else:
             messagebox.showerror("错误", "日志文件夹不存在")
 
-    def run_system_doctor(self):
-        def doctor_thread():
-            self.log("\n========== 启动系统医生 ==========")
-            script_path = os.path.join(os.path.dirname(__file__), "utils", "system_doctor.py")
-            if not os.path.exists(script_path):
-                self.log("错误：未找到 system_doctor.py")
-                return
-            cmd = [sys.executable, script_path]
-            rc, success = self.runner.run(cmd)
-            if not success:
-                self.log("系统医生执行失败")
-            else:
-                self.log("系统医生执行完成")
-
-        self.toolbar.doctor_btn.config(state='disabled')
-        thread = threading.Thread(target=doctor_thread)
-        thread.daemon = True
-        thread.start()
-        self.root.after(10000, lambda: self.toolbar.doctor_btn.config(state='normal'))
-
     def open_settings(self):
         settings_dialog.show_settings(self.root)
-
-    def save_config(self):
-        api_key = self.toolbar.api_key_entry.get().strip()
-        model = self.toolbar.model_combo.get()
-        config_manager.save_config(api_key, model)
-        os.environ.pop('DEEPSEEK_API_KEY', None)
-        os.environ['DEEPSEEK_API_KEY'] = api_key
-        self.api_key = api_key
-        self.model = model
-        messagebox.showinfo("成功", "配置已保存")
-        print(f"保存配置，当前环境变量中的 Key: {api_key[:8]}...")
+        # 重新加载 API 配置（因为用户可能在设置中修改了）
+        self.api_key, self.model = config_manager.load_config()
+        if self.api_key:
+            os.environ['DEEPSEEK_API_KEY'] = self.api_key
+        else:
+            os.environ.pop('DEEPSEEK_API_KEY', None)
 
     def _update_preset_label(self):
         mode = self.toolbar.text_type_var.get()
@@ -475,17 +478,27 @@ class App:
                 self.toolbar.mode_slider.set(1)
             self._updating_slider = False
 
-        # 切换故事模块的内容
         if mode == "一键成片":
             self.standard_mode.frame.pack_forget()
             self.simple_mode.frame.pack(fill='both', expand=True)
+            # 确保底部日志框不被覆盖
+            self.log_text.pack(side='bottom', fill='x', padx=5, pady=2)
+            self.log_text.lift()
+            self.root.update_idletasks()   # 强制刷新布局
             self.toolbar.extra_left_frame.pack_forget()
+            is_i2v = (self.toolbar.mode_var.get() == "图生视频")
+            self.simple_mode.set_i2v_mode(is_i2v)
+            # 修复日志框被覆盖的问题
+            if hasattr(self, 'log_text') and self.log_text:
+                self.log_text.pack_forget()
+                self.log_text.pack(side='bottom', fill='x', padx=5, pady=2)
+                self.log_text.lift()
+                self.root.update_idletasks()
         else:
             self.simple_mode.frame.pack_forget()
             self.standard_mode.frame.pack(fill='both', expand=True)
             self.toolbar.extra_left_frame.pack(side='left', after=self.toolbar.title_entry)
 
-        # 同步口播稿到音频面板
         self.sync_script_to_audio()
 
     # ---------- 业务方法 ----------

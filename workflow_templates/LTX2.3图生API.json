@@ -1,0 +1,625 @@
+{
+  "1": {
+    "inputs": {
+      "samples": [
+        "80",
+        1
+      ],
+      "audio_vae": [
+        "29",
+        0
+      ]
+    },
+    "class_type": "LTXVAudioVAEDecode",
+    "_meta": {
+      "title": "LTXV音频VAE解码"
+    }
+  },
+  "3": {
+    "inputs": {
+      "value": 24
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "fps"
+    }
+  },
+  "4": {
+    "inputs": {
+      "text_encoder": "gemma_3_12B_it_fp8_e4m3fn.safetensors",
+      "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors",
+      "device": "default"
+    },
+    "class_type": "LTXAVTextEncoderLoader",
+    "_meta": {
+      "title": "LTXV音频文本编码器加载器"
+    }
+  },
+  "5": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "7": {
+    "inputs": {
+      "text": "Text, subtitles, LOGO、 Blurring, defocusing, overexposure, underexposure, low contrast, fading, excessive noise, rough texture, poor lighting, flickering, motion blur, proportional distortion, unnatural skin tone, facial feature deformation, asymmetrical face, missing facial features, extra limbs, hand deformation, incorrect hand count, ghosting around text, unreadable text on shirt or hat, incorrect letters on hat (\"PNTR\"), incorrect T-shirt slogan (\"JUST DO IT\"), microphone loss, microphone misalignment, inconsistent viewing angle, camera shake, incorrect scene depth, clear background, cluttered background, scattered reflection, glaring shadows, inconsistent lighting direction, ribbon, cartoon rendering, 3D CGI Appearance, unrealistic materials, uncanny valley effect, incorrect race, inaccurate gender, exaggerated expressions, smiles, laughter, exaggerated sadness, incorrect gaze direction, eyes looking at the camera, lip synchronization mismatch, silent or muted audio, distorted sound, robot sound, echo, background noise, asynchronous audio, loss of smell, incorrect dialogue, added dialogue, repeated speech, tense actions, awkward pauses, incorrect time, unnatural transitions, inconsistent frames, tilted camera, lack of doors or shelves, lack of shallow depth of field, flat light, unstable color tones, movie oversaturation, program filters or artificial intelligence artifacts.",
+      "clip": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "10": {
+    "inputs": {
+      "image": "仙侠.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载图像"
+    }
+  },
+  "11": {
+    "inputs": {
+      "value": "a * b + 1",
+      "a": [
+        "83",
+        0
+      ],
+      "b": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "SimpleMath+",
+    "_meta": {
+      "title": "🔧 Simple Math"
+    }
+  },
+  "18": {
+    "inputs": {
+      "img_compression": 18,
+      "image": [
+        "48",
+        0
+      ]
+    },
+    "class_type": "LTXVPreprocess",
+    "_meta": {
+      "title": "LTXV预处理"
+    }
+  },
+  "19": {
+    "inputs": {
+      "strength": 0.7,
+      "bypass": [
+        "52",
+        0
+      ],
+      "vae": [
+        "27",
+        2
+      ],
+      "image": [
+        "18",
+        0
+      ],
+      "latent": [
+        "22",
+        0
+      ]
+    },
+    "class_type": "LTXVImgToVideoConditionOnly",
+    "_meta": {
+      "title": "🅛🅣🅧 LTXV Img To Video Condition Only"
+    }
+  },
+  "20": {
+    "inputs": {
+      "video_latent": [
+        "19",
+        0
+      ],
+      "audio_latent": [
+        "21",
+        0
+      ]
+    },
+    "class_type": "LTXVConcatAVLatent",
+    "_meta": {
+      "title": "LTXVConcatAVLatent"
+    }
+  },
+  "21": {
+    "inputs": {
+      "frames_number": [
+        "11",
+        0
+      ],
+      "frame_rate": [
+        "89",
+        0
+      ],
+      "batch_size": 1,
+      "audio_vae": [
+        "29",
+        0
+      ]
+    },
+    "class_type": "LTXVEmptyLatentAudio",
+    "_meta": {
+      "title": "LTXV 空音频潜空间"
+    }
+  },
+  "22": {
+    "inputs": {
+      "width": [
+        "48",
+        1
+      ],
+      "height": [
+        "48",
+        2
+      ],
+      "length": [
+        "11",
+        0
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLTXVLatentVideo",
+    "_meta": {
+      "title": "空Latent视频（LTXV）"
+    }
+  },
+  "27": {
+    "inputs": {
+      "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Checkpoint加载器（简易）"
+    }
+  },
+  "29": {
+    "inputs": {
+      "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors"
+    },
+    "class_type": "LTXVAudioVAELoader",
+    "_meta": {
+      "title": "LTXV音频VAE加载器"
+    }
+  },
+  "33": {
+    "inputs": {
+      "anything": [
+        "10",
+        0
+      ]
+    },
+    "class_type": "easy cleanGpuUsed",
+    "_meta": {
+      "title": "清理显存占用"
+    }
+  },
+  "37": {
+    "inputs": {
+      "frame_rate": [
+        "3",
+        0
+      ],
+      "positive": [
+        "5",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "LTXVConditioning",
+    "_meta": {
+      "title": "LTXV条件"
+    }
+  },
+  "38": {
+    "inputs": {
+      "noise": [
+        "40",
+        0
+      ],
+      "guider": [
+        "39",
+        0
+      ],
+      "sampler": [
+        "42",
+        0
+      ],
+      "sigmas": [
+        "43",
+        0
+      ],
+      "latent_image": [
+        "20",
+        0
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "自定义采样器（高级）"
+    }
+  },
+  "39": {
+    "inputs": {
+      "cfg": 1,
+      "model": [
+        "55",
+        0
+      ],
+      "positive": [
+        "37",
+        0
+      ],
+      "negative": [
+        "37",
+        1
+      ]
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFG引导器"
+    }
+  },
+  "40": {
+    "inputs": {
+      "noise_seed": 43
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "随机噪波"
+    }
+  },
+  "42": {
+    "inputs": {
+      "sampler_name": "euler_ancestral_cfg_pp"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "K采样器选择"
+    }
+  },
+  "43": {
+    "inputs": {
+      "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+    },
+    "class_type": "ManualSigmas",
+    "_meta": {
+      "title": "自定义Sigmas"
+    }
+  },
+  "44": {
+    "inputs": {
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 512,
+      "temporal_overlap": 64,
+      "samples": [
+        "80",
+        0
+      ],
+      "vae": [
+        "27",
+        2
+      ]
+    },
+    "class_type": "VAEDecodeTiled",
+    "_meta": {
+      "title": "VAE解码（分块）"
+    }
+  },
+  "46": {
+    "inputs": {
+      "av_latent": [
+        "38",
+        0
+      ]
+    },
+    "class_type": "LTXVSeparateAVLatent",
+    "_meta": {
+      "title": "LTXV分离音视频潜空间"
+    }
+  },
+  "48": {
+    "inputs": {
+      "width": [
+        "54",
+        0
+      ],
+      "height": [
+        "54",
+        1
+      ],
+      "upscale_method": "lanczos",
+      "keep_proportion": "crop",
+      "pad_color": "0, 0, 0",
+      "crop_position": "center",
+      "divisible_by": 2,
+      "device": "cpu",
+      "image": [
+        "10",
+        0
+      ]
+    },
+    "class_type": "ImageResizeKJv2",
+    "_meta": {
+      "title": "Resize Image v2"
+    }
+  },
+  "52": {
+    "inputs": {
+      "value": false
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "切换文生视频"
+    }
+  },
+  "54": {
+    "inputs": {
+      "use_custom_resolution": true,
+      "resolution": "1280x720 (16:9) (横屏)",
+      "custom_width": 640,
+      "custom_height": 360
+    },
+    "class_type": "TTResolutionSelector",
+    "_meta": {
+      "title": "TT分辨率选择器"
+    }
+  },
+  "55": {
+    "inputs": {
+      "lora_name": "Ltx-2.3/ltx-2.3-22b-distilled-lora-384.safetensors",
+      "strength_model": 0.5,
+      "model": [
+        "27",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoRA加载器（仅模型）"
+    }
+  },
+  "57": {
+    "inputs": {
+      "model_name": "ltx-2.3-spatial-upscaler-x2-1.0.safetensors"
+    },
+    "class_type": "LatentUpscaleModelLoader",
+    "_meta": {
+      "title": "加载Latent放大模型"
+    }
+  },
+  "60": {
+    "inputs": {
+      "samples": [
+        "46",
+        0
+      ],
+      "upscale_model": [
+        "57",
+        0
+      ],
+      "vae": [
+        "27",
+        2
+      ]
+    },
+    "class_type": "LTXVLatentUpsampler",
+    "_meta": {
+      "title": "LTXV潜空间上采样器"
+    }
+  },
+  "64": {
+    "inputs": {
+      "strength": 1,
+      "bypass": false,
+      "vae": [
+        "27",
+        2
+      ],
+      "image": [
+        "66",
+        0
+      ],
+      "latent": [
+        "60",
+        0
+      ]
+    },
+    "class_type": "LTXVImgToVideoConditionOnly",
+    "_meta": {
+      "title": "🅛🅣🅧 LTXV Img To Video Condition Only"
+    }
+  },
+  "66": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "scale_by": 0.5000000000000001,
+      "image": [
+        "48",
+        0
+      ]
+    },
+    "class_type": "ImageScaleBy",
+    "_meta": {
+      "title": "缩放图像（比例）"
+    }
+  },
+  "73": {
+    "inputs": {
+      "noise": [
+        "74",
+        0
+      ],
+      "guider": [
+        "75",
+        0
+      ],
+      "sampler": [
+        "77",
+        0
+      ],
+      "sigmas": [
+        "78",
+        0
+      ],
+      "latent_image": [
+        "79",
+        0
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "自定义采样器（高级）"
+    }
+  },
+  "74": {
+    "inputs": {
+      "noise_seed": 42
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "随机噪波"
+    }
+  },
+  "75": {
+    "inputs": {
+      "cfg": 1,
+      "model": [
+        "55",
+        0
+      ],
+      "positive": [
+        "37",
+        0
+      ],
+      "negative": [
+        "37",
+        1
+      ]
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFG引导器"
+    }
+  },
+  "77": {
+    "inputs": {
+      "sampler_name": "euler_cfg_pp"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "K采样器选择"
+    }
+  },
+  "78": {
+    "inputs": {
+      "sigmas": "0.85, 0.7250, 0.4219, 0.0"
+    },
+    "class_type": "ManualSigmas",
+    "_meta": {
+      "title": "自定义Sigmas"
+    }
+  },
+  "79": {
+    "inputs": {
+      "video_latent": [
+        "64",
+        0
+      ],
+      "audio_latent": [
+        "46",
+        1
+      ]
+    },
+    "class_type": "LTXVConcatAVLatent",
+    "_meta": {
+      "title": "LTXVConcatAVLatent"
+    }
+  },
+  "80": {
+    "inputs": {
+      "av_latent": [
+        "73",
+        0
+      ]
+    },
+    "class_type": "LTXVSeparateAVLatent",
+    "_meta": {
+      "title": "LTXV分离音视频潜空间"
+    }
+  },
+  "82": {
+    "inputs": {
+      "frame_rate": [
+        "3",
+        0
+      ],
+      "loop_count": 0,
+      "filename_prefix": "LTX2/ltx2-i2v",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": false,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "44",
+        0
+      ],
+      "audio": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "83": {
+    "inputs": {
+      "value": 8
+    },
+    "class_type": "INTConstant",
+    "_meta": {
+      "title": "时长"
+    }
+  },
+  "89": {
+    "inputs": {
+      "value": [
+        "3",
+        0
+      ],
+      "mode": "round"
+    },
+    "class_type": "JWFloatToInteger",
+    "_meta": {
+      "title": "Float to Integer"
+    }
+  }
+}

@@ -241,6 +241,13 @@ def build_shot_prompt(shot: Dict, global_assets: str, local_assets: str) -> str:
         guidance += f"""
 【角色固定特征】（必须保留，描述人物的发型、发色、脸型、身高、体型、惯用着装等）
 {character_desc}
+
+**重要：角色固定属性中的名称格式为“种族 角色名”，例如“熊猫 阿六”。在生成 Subject + Action 时，必须根据种族选择正确的英文名词，例如：
+- 种族为“熊猫” → “a panda named A-Liu”
+- 种族为“人类” → “a young man named A-Liu” 或 “a young woman named A-Liu”
+- 种族为“机器人” → “a robot named A-Liu”
+- 如果未指定种族，则默认为人类。
+请严格遵守此规则，不要将熊猫描述为人类。**
 """
     if temp_clothing:
         guidance += f"""
