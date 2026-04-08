@@ -84,6 +84,9 @@ class App:
 
         # 顶部工具栏
         self.toolbar = TopToolbar(self.root, self)
+        self.workflow_var = self.toolbar.workflow_var
+        self.aspect_ratio_var = self.toolbar.aspect_ratio_var
+        self.resolution_var = self.toolbar.resolution_var
         self.toolbar.pack(fill='x', padx=5, pady=5)
         self.toolbar.mode_var.trace('w', self.on_video_mode_change)
 
@@ -264,30 +267,7 @@ class App:
 
     # ---------- 视频模块 ----------
     def create_video_panel(self):
-        """创建视频模块控件"""
-        config_frame = ttk.LabelFrame(self.video_frame, text="视频设置", padding=5)
-        config_frame.pack(fill='x', padx=5, pady=5)
-
-        ttk.Label(config_frame, text="工作流：").grid(row=0, column=0, sticky='w', padx=5)
-        self.workflow_var = tk.StringVar(value="LTX2.3")
-        workflow_combo = ttk.Combobox(config_frame, textvariable=self.workflow_var,
-                                       values=["WAN2.2", "LTX2.3"], state="readonly", width=10)
-        workflow_combo.grid(row=0, column=1, padx=5)
-
-        ttk.Label(config_frame, text="宽高比：").grid(row=0, column=2, padx=(20,0))
-        self.aspect_ratio_var = tk.StringVar(value="16:9")
-        aspect_combo = ttk.Combobox(config_frame, textvariable=self.aspect_ratio_var,
-                                     values=list(ASPECT_RATIO_MAP.keys()), state="readonly", width=10)
-        aspect_combo.grid(row=0, column=3, padx=5)
-        aspect_combo.bind('<<ComboboxSelected>>', self.on_aspect_ratio_change)
-
-        ttk.Label(config_frame, text="分辨率：").grid(row=0, column=4, padx=(5,0))
-        self.resolution_var = tk.StringVar()
-        self.resolution_combo = ttk.Combobox(config_frame, textvariable=self.resolution_var,
-                                             values=ASPECT_RATIO_MAP["16:9"], state="readonly", width=12)
-        self.resolution_combo.grid(row=0, column=5, padx=5)
-        self.resolution_var.set("1280x720")
-
+        """创建视频模块控件（仅保留按钮和视频列表）"""
         # 按钮区域
         btn_frame = ttk.Frame(self.video_frame)
         btn_frame.pack(fill='x', padx=5, pady=5)
@@ -297,10 +277,9 @@ class App:
         ttk.Button(btn_frame, text="选择或编辑提示词", command=self.open_shot_editor, width=16).pack(side='left', padx=2)
         ttk.Button(btn_frame, text="视频精确裁剪", command=self.run_video_align, width=12).pack(side='left', padx=2)
 
-        # 继续按钮（用于异常恢复）
         self.continue_btn = ttk.Button(btn_frame, text="继续", command=self.continue_generation, state='disabled', width=8)
         self.continue_btn.pack(side='left', padx=2)
-        # 添加视频列表面板
+
         from gui.standard_video_panel import StandardVideoPanel
         self.video_panel = StandardVideoPanel(self.video_frame, self)
         self.video_panel.frame.pack(fill='both', expand=True, padx=5, pady=5)

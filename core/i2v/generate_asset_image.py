@@ -135,7 +135,9 @@ def generate_asset_image(
     style_desc: str,
     api_url: Optional[str] = None,
     custom_prompt: Optional[str] = None,
-    log_callback=None
+    log_callback=None,
+    width: Optional[int] = None,
+    height: Optional[int] = None
 ) -> Optional[str]:
     """生成单个角色定妆照，支持自定义提示词"""
     if api_url is None:
@@ -191,6 +193,17 @@ def generate_asset_image(
         else:
             print(msg)
         return None
+    
+    # 设置分辨率（如果提供）
+    if width is not None and height is not None:
+        if "25" in workflow and workflow["25"]["class_type"] == "EmptyLatentImage":
+            workflow["25"]["inputs"]["width"] = width
+            workflow["25"]["inputs"]["height"] = height
+            if log_callback:
+                log_callback(f"设置资产图分辨率: {width}x{height}")
+        else:
+            if log_callback:
+                log_callback("警告：工作流中未找到节点25（EmptyLatentImage），无法设置分辨率")
 
     # 随机化种子
     if "21" in workflow and "inputs" in workflow["21"]:
@@ -310,7 +323,7 @@ def generate_asset_image_with_prompt(
     return generate_asset_image(work_dir, character_name, character_desc, scene_desc, style_desc, api_url, custom_prompt)
 
 
-def generate_all_assets(work_dir: str, log_callback=None) -> List[str]:
+def generate_all_assets(work_dir: str, log_callback=None, width: Optional[int] = None, height: Optional[int] = None) -> List[str]:
     """批量生成所有角色的资产图（使用默认提示词）"""
     style, characters = parse_global_assets(work_dir)
     if not characters:
@@ -323,7 +336,7 @@ def generate_all_assets(work_dir: str, log_callback=None) -> List[str]:
     for name, desc in characters.items():
         if log_callback:
             log_callback(f"正在生成角色 {name} 的资产图...")
-        path = generate_asset_image(work_dir, name, desc, scene, style, log_callback=log_callback)
+        path = generate_asset_image(work_dir, name, desc, scene, style, log_callback=log_callback, width=width, height=height)
         if path:
             generated.append(path)
             if log_callback:
@@ -332,7 +345,6 @@ def generate_all_assets(work_dir: str, log_callback=None) -> List[str]:
             if log_callback:
                 log_callback(f"❌ {name} 资产图生成失败")
     return generated
-
 
 if __name__ == "__main__":
     import argparse

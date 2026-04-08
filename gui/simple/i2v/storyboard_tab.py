@@ -19,52 +19,62 @@ class StoryboardTab:
         self.images_dir = None
         
         # 创建主布局：上下两部分
-        # 上部：定妆照区域
+        # 上部：定妆照区域（左右分栏：左侧单个预览+提示词，右侧所有角色缩略图）
         top_frame = ttk.LabelFrame(self.frame, text="角色定妆照", padding=5)
         top_frame.pack(fill='x', padx=5, pady=5)
         
-        # 左侧预览图
-        preview_frame = ttk.Frame(top_frame)
-        preview_frame.pack(side='left', padx=5)
-        self.asset_preview = tk.Label(preview_frame, bg='gray', width=150, height=150)
+        # 左侧：当前选中的角色预览和提示词编辑
+        left_frame = ttk.Frame(top_frame)
+        left_frame.pack(side='left', fill='both', expand=True, padx=5)
+        
+        self.asset_preview = tk.Label(left_frame, bg='gray', width=150, height=150)
         self.asset_preview.pack()
-        self.asset_preview.bind('<Button-1>', self._preview_asset)  # 点击预览
-        self.asset_status = ttk.Label(preview_frame, text="", foreground='gray')
+        self.asset_preview.bind('<Button-1>', self._preview_asset)
+        self.asset_status = ttk.Label(left_frame, text="", foreground='gray')
         self.asset_status.pack()
         
-        # 右侧提示词编辑区
-        prompt_frame = ttk.Frame(top_frame)
-        prompt_frame.pack(side='left', fill='both', expand=True, padx=10)
-        ttk.Label(prompt_frame, text="定妆照提示词：").pack(anchor='w')
-        self.asset_prompt_text = tk.Text(prompt_frame, height=5, wrap='word')
+        ttk.Label(left_frame, text="定妆照提示词：").pack(anchor='w', pady=(5,0))
+        self.asset_prompt_text = tk.Text(left_frame, height=5, wrap='word')
         self.asset_prompt_text.pack(fill='both', expand=True)
-        btn_frame = ttk.Frame(prompt_frame)
+        btn_frame = ttk.Frame(left_frame)
         btn_frame.pack(fill='x', pady=5)
         ttk.Button(btn_frame, text="重新生成定妆照", command=self.regenerate_asset).pack(side='left', padx=2)
         ttk.Button(btn_frame, text="上传替换", command=self.upload_asset).pack(side='left', padx=2)
+        
+        # 右侧：所有角色的缩略图列表（横向滚动）
+        right_frame = ttk.LabelFrame(top_frame, text="所有角色", padding=5)
+        right_frame.pack(side='left', fill='both', expand=True, padx=5)
+        
+        self.asset_canvas = tk.Canvas(right_frame, highlightthickness=0, height=180)
+        self.asset_scrollbar = ttk.Scrollbar(right_frame, orient='horizontal', command=self.asset_canvas.xview)
+        self.asset_scrollable = ttk.Frame(self.asset_canvas)
+        self.asset_scrollable.bind("<Configure>", lambda e: self.asset_canvas.configure(scrollregion=self.asset_canvas.bbox("all")))
+        self.asset_canvas.create_window((0, 0), window=self.asset_scrollable, anchor='nw')
+        self.asset_canvas.configure(xscrollcommand=self.asset_scrollbar.set)
+        self.asset_canvas.pack(side='top', fill='x')
+        self.asset_scrollbar.pack(side='bottom', fill='x')
+        
+        self.asset_items = []  # 存储 (frame, label, name)
         
         # 下部：镜头列表（滚动区域）
         bottom_frame = ttk.LabelFrame(self.frame, text="镜头首帧图", padding=5)
         bottom_frame.pack(fill='both', expand=True, padx=5, pady=5)
         
-        # 创建画布+滚动条
         self.canvas = tk.Canvas(bottom_frame, highlightthickness=0)
         scrollbar = ttk.Scrollbar(bottom_frame, orient='vertical', command=self.canvas.yview)
         self.scrollable_frame = ttk.Frame(self.canvas)
         self.scrollable_frame.bind("<Configure>", self._on_frame_configure)
         self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor='nw')
         self.canvas.configure(yscrollcommand=scrollbar.set)
-        
         self.canvas.pack(side='left', fill='both', expand=True)
         scrollbar.pack(side='right', fill='y')
         
-        # 绑定滚轮
         self.canvas.bind("<MouseWheel>", self._on_mousewheel)
         self.scrollable_frame.bind("<MouseWheel>", self._on_mousewheel)
         
-        self.shot_frames = []  # 存储每个镜头的UI组件引用
+        self.shot_frames = []
+        self.current_character = None
         
-        # 定时刷新
         self.refresh()
     
     def set_work_dir(self, work_dir):
@@ -73,61 +83,67 @@ class StoryboardTab:
         self.refresh()
 
     def _preview_asset(self, event=None):
-        asset_path = self._get_asset_path()
-        if asset_path and os.path.exists(asset_path):
-            self._preview_image(asset_path)
+        if self.current_character:
+            path = os.path.join(self.images_dir, f"{self.current_character}.png")
+            if os.path.exists(path):
+                self._preview_image(path)
     
     def refresh(self):
-        """刷新显示：定妆照 + 所有镜头"""
         if not self.work_dir:
             return
-        # 刷新定妆照
-        self._refresh_asset()
-        # 刷新镜头列表
+        self._refresh_asset_list()
         self._refresh_shots()
-
-    def _get_character_name(self):
-        """从 assets_global.txt 解析第一个角色名"""
+    
+    def _get_all_characters(self):
         if not self.work_dir:
-            return None
+            return []
         global_path = os.path.join(self.work_dir, "assets_global.txt")
         if not os.path.exists(global_path):
-            return None
+            return []
         with open(global_path, 'r', encoding='utf-8') as f:
             content = f.read()
         import re
-        match = re.search(r'【[^】]*\s+([^】]+)】', content)
-        if match:
-            return match.group(1).strip()
-        return None
+        matches = re.findall(r'【[^】]*\s+([^】]+)】', content)
+        return matches
     
-    def _refresh_asset(self):
-        """刷新定妆照显示，并加载对应的提示词（即使图片不存在也要加载提示词）"""
-        # 获取角色名
-        character_name = self._get_character_name()
-        if not character_name:
+    def _refresh_asset_list(self):
+        for widget in self.asset_scrollable.winfo_children():
+            widget.destroy()
+        self.asset_items.clear()
+        
+        characters = self._get_all_characters()
+        if not characters:
             self.asset_preview.config(image='')
             self.asset_status.config(text="未找到角色", foreground='red')
             self.asset_prompt_text.delete('1.0', 'end')
             self.asset_prompt_text.insert('1.0', "未找到角色信息，请先生成剧本")
             return
-
-        # 构建图片和提示词路径
-        asset_path = os.path.join(self.images_dir, f"{character_name}.png") if self.images_dir else None
-        prompt_path = os.path.join(self.images_dir, f"{character_name}_prompt.txt") if self.images_dir else None
-
-        # 先处理提示词（无论图片是否存在）
-        if prompt_path and os.path.exists(prompt_path):
-            with open(prompt_path, 'r', encoding='utf-8') as f:
-                prompt = f.read()
-            self.asset_prompt_text.delete('1.0', 'end')
-            self.asset_prompt_text.insert('1.0', prompt)
-        else:
-            self.asset_prompt_text.delete('1.0', 'end')
-            self.asset_prompt_text.insert('1.0', "（提示词文件未找到，请手动输入或重新生成）")
-
-        # 再处理图片
-        if asset_path and os.path.exists(asset_path):
+        
+        for name in characters:
+            frame = ttk.Frame(self.asset_scrollable)
+            frame.pack(side='left', padx=5, pady=5)
+            asset_path = os.path.join(self.images_dir, f"{name}.png")
+            if os.path.exists(asset_path):
+                img = Image.open(asset_path)
+                img.thumbnail((80, 80))
+                photo = ImageTk.PhotoImage(img)
+                label = tk.Label(frame, image=photo)
+                label.image = photo
+                label.pack()
+            else:
+                label = tk.Label(frame, text="未生成", bg='gray', width=10, height=5)
+                label.pack()
+            ttk.Label(frame, text=name).pack()
+            label.bind('<Button-1>', lambda e, n=name: self._select_character(n))
+            self.asset_items.append((frame, label, name))
+        
+        if characters:
+            self._select_character(characters[0])
+    
+    def _select_character(self, name):
+        self.current_character = name
+        asset_path = os.path.join(self.images_dir, f"{name}.png")
+        if os.path.exists(asset_path):
             img = Image.open(asset_path)
             img.thumbnail((150, 150))
             photo = ImageTk.PhotoImage(img)
@@ -137,77 +153,55 @@ class StoryboardTab:
         else:
             self.asset_preview.config(image='')
             self.asset_status.config(text="未生成", foreground='red')
+        
+        prompt_path = os.path.join(self.images_dir, f"{name}_prompt.txt")
+        if os.path.exists(prompt_path):
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                prompt = f.read()
+            self.asset_prompt_text.delete('1.0', 'end')
+            self.asset_prompt_text.insert('1.0', prompt)
+        else:
+            self.asset_prompt_text.delete('1.0', 'end')
+            self.asset_prompt_text.insert('1.0', "（提示词文件未找到）")
     
     def _get_asset_path(self):
-        """获取定妆照路径（第一个角色的图片）"""
-        if not self.work_dir:
-            return None
-        # 从 assets_global.txt 解析角色名
-        global_path = os.path.join(self.work_dir, "assets_global.txt")
-        if not os.path.exists(global_path):
-            return None
-        with open(global_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        import re
-        match = re.search(r'【[^】]*\s+([^】]+)】', content)
-        if not match:
-            return None
-        character_name = match.group(1).strip()
-        asset_path = os.path.join(self.work_dir, "images", f"{character_name}.png")
-        if os.path.exists(asset_path):
-            return asset_path
+        if self.current_character:
+            return os.path.join(self.images_dir, f"{self.current_character}.png")
         return None
     
     def _refresh_shots(self):
-        """刷新镜头列表"""
-        # 清除原有内容
         for widget in self.scrollable_frame.winfo_children():
             widget.destroy()
         self.shot_frames.clear()
         
-        # 加载提示词和图片
         prompts_path = os.path.join(self.work_dir, "first_frame_prompts.json")
         if not os.path.exists(prompts_path):
-            label = ttk.Label(self.scrollable_frame, text="未找到首帧图提示词，请先生成")
-            label.pack(pady=20)
+            ttk.Label(self.scrollable_frame, text="未找到首帧图提示词，请先生成").pack(pady=20)
             return
         
-        import json
         with open(prompts_path, 'r', encoding='utf-8') as f:
-            prompts_data = json.load(f)  # [{"shot_id": "1-1", "prompt": "..."}]
-        
+            prompts_data = json.load(f)
         for item in prompts_data:
-            shot_id = item['shot_id']
-            prompt = item['prompt']
-            self._add_shot_row(shot_id, prompt)
+            self._add_shot_row(item['shot_id'], item['prompt'])
     
     def _add_shot_row(self, shot_id, prompt):
         row_frame = ttk.Frame(self.scrollable_frame)
         row_frame.pack(fill='x', pady=5, padx=5)
-
-        # 镜号
+        
         ttk.Label(row_frame, text=shot_id, width=8).pack(side='left')
-
-        # 提示词文本框，占用剩余空间
         prompt_text = tk.Text(row_frame, height=3, wrap='word')
         prompt_text.insert('1.0', prompt)
         prompt_text.pack(side='left', fill='both', expand=True, padx=5)
-
-        # 缩略图（固定宽高）
+        
         img_label = tk.Label(row_frame, bg='gray', width=100, height=100)
         img_label.pack(side='left', padx=5)
-
-        # 按钮区域
+        
         btn_frame = ttk.Frame(row_frame)
         btn_frame.pack(side='left', padx=5)
-        ttk.Button(btn_frame, text="保存提示词",
-                command=lambda sid=shot_id, txt=prompt_text: self._save_prompt(sid, txt)).pack(pady=2)
-        ttk.Button(btn_frame, text="重新生成",
-                command=lambda sid=shot_id, txt=prompt_text: self._regenerate_shot(sid, txt)).pack(pady=2)
-        ttk.Button(btn_frame, text="上传替换",
-                command=lambda sid=shot_id: self._upload_shot_image(sid)).pack(pady=2)
-
-        # 加载缩略图
+        ttk.Button(btn_frame, text="保存提示词", command=lambda sid=shot_id, txt=prompt_text: self._save_prompt(sid, txt)).pack(pady=2)
+        ttk.Button(btn_frame, text="重新生成", command=lambda sid=shot_id, txt=prompt_text: self._regenerate_shot(sid, txt)).pack(pady=2)
+        ttk.Button(btn_frame, text="上传替换", command=lambda sid=shot_id: self._upload_shot_image(sid)).pack(pady=2)
+        
         img_path = os.path.join(self.images_dir, f"{shot_id}.png") if self.images_dir else None
         if img_path and os.path.exists(img_path):
             try:
@@ -219,7 +213,7 @@ class StoryboardTab:
                 img_label.bind('<Button-1>', lambda e, p=img_path: self._preview_image(p))
             except Exception as e:
                 print(f"加载缩略图失败 {shot_id}: {e}")
-
+        
         self.shot_frames.append({
             'shot_id': shot_id,
             'row_frame': row_frame,
@@ -228,7 +222,6 @@ class StoryboardTab:
         })
     
     def _save_prompt(self, shot_id, text_widget):
-        """保存修改后的提示词到 first_frame_prompts.json"""
         new_prompt = text_widget.get('1.0', 'end-1c').strip()
         if not new_prompt:
             messagebox.showwarning("提示", "提示词不能为空")
@@ -245,17 +238,13 @@ class StoryboardTab:
         messagebox.showinfo("成功", "提示词已保存")
     
     def _regenerate_shot(self, shot_id, text_widget):
-        """重新生成单个镜头的首帧图"""
-        # 先保存提示词
         self._save_prompt(shot_id, text_widget)
-        # 调用控制器的方法重新生成
         if hasattr(self.controller, 'regenerate_single_frame'):
             self.controller.regenerate_single_frame(shot_id)
         else:
             messagebox.showwarning("提示", "重新生成功能未实现")
     
     def _upload_shot_image(self, shot_id):
-        """手动上传替换该镜头的首帧图"""
         file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.png *.jpg *.jpeg")])
         if not file_path:
             return
@@ -275,41 +264,38 @@ class StoryboardTab:
         x = (win.winfo_screenwidth() // 2) - (win.winfo_width() // 2)
         y = (win.winfo_screenheight() // 2) - (win.winfo_height() // 2)
         win.geometry(f"+{x}+{y}")
-
+        
         canvas = tk.Canvas(win, highlightthickness=0)
         canvas.pack(fill='both', expand=True)
-
         original_img = Image.open(path)
         img_label = tk.Label(canvas)
         canvas.create_window((0, 0), window=img_label, anchor='nw')
-
+        
         resize_after_id = None
         def resize(event=None):
             nonlocal resize_after_id
             if resize_after_id:
                 win.after_cancel(resize_after_id)
             resize_after_id = win.after(200, do_resize)
-
+        
         def do_resize():
-            canvas_width = canvas.winfo_width()
-            canvas_height = canvas.winfo_height()
-            if canvas_width <= 1 or canvas_height <= 1:
+            w = canvas.winfo_width()
+            h = canvas.winfo_height()
+            if w <= 1 or h <= 1:
                 return
-            img_width, img_height = original_img.size
-            # 等比例缩放，使图片完全显示在窗口内（留白）
-            scale = min(canvas_width / img_width, canvas_height / img_height)
-            new_width = int(img_width * scale)
-            new_height = int(img_height * scale)
-            resized = original_img.resize((new_width, new_height), Image.LANCZOS)
+            iw, ih = original_img.size
+            scale = min(w / iw, h / ih)
+            nw = int(iw * scale)
+            nh = int(ih * scale)
+            resized = original_img.resize((nw, nh), Image.LANCZOS)
             photo = ImageTk.PhotoImage(resized)
             img_label.config(image=photo)
             img_label.image = photo
-            # 居中显示
-            x_offset = (canvas_width - new_width) // 2
-            y_offset = (canvas_height - new_height) // 2
-            canvas.coords(canvas.find_all()[0], x_offset, y_offset)
-            canvas.configure(scrollregion=(0, 0, canvas_width, canvas_height))
-
+            xo = (w - nw) // 2
+            yo = (h - nh) // 2
+            canvas.coords(canvas.find_all()[0], xo, yo)
+            canvas.configure(scrollregion=(0, 0, w, h))
+        
         win.bind('<Configure>', resize)
         win.after(100, do_resize)
     
@@ -321,18 +307,18 @@ class StoryboardTab:
             messagebox.showwarning("提示", "重新生成定妆照功能未实现")
     
     def upload_asset(self):
-        """手动上传替换定妆照"""
+        if not self.current_character:
+            messagebox.showerror("错误", "未选中任何角色")
+            return
         file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.png *.jpg *.jpeg")])
         if not file_path:
             return
-        asset_path = self._get_asset_path()
-        if not asset_path:
-            messagebox.showerror("错误", "未找到角色信息，请先生成资产图")
-            return
         import shutil
-        os.makedirs(os.path.dirname(asset_path), exist_ok=True)
-        shutil.copy2(file_path, asset_path)
-        self._refresh_asset()
+        target = os.path.join(self.images_dir, f"{self.current_character}.png")
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        shutil.copy2(file_path, target)
+        self._refresh_asset_list()
+        self._select_character(self.current_character)
         messagebox.showinfo("成功", "定妆照已替换")
     
     def _on_frame_configure(self, event):

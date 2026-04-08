@@ -61,7 +61,7 @@ def submit_workflow(api_url: str, workflow: dict) -> Optional[str]:
         return None
 
 
-def wait_for_history(api_url: str, prompt_id: str, timeout: int = 600) -> Optional[dict]:
+def wait_for_history(api_url: str, prompt_id: str, timeout: int = 600, log_callback=None) -> Optional[dict]:
     """等待工作流完成，返回 history 字典"""
     url = f"{api_url.rstrip('/')}/history/{prompt_id}"
     start_time = time.time()
@@ -149,7 +149,9 @@ def generate_batch(
     asset_image_path: str,
     prompts: List[tuple],
     api_url: Optional[str] = None,
-    log_callback=None
+    log_callback=None,
+    width: Optional[int] = None,
+    height: Optional[int] = None
 ) -> List[str]:
     if api_url is None:
         api_url = config_manager.COMFYUI_API_URL
@@ -164,8 +166,21 @@ def generate_batch(
     with open(WORKFLOW_TEMPLATE, 'r', encoding='utf-8') as f:
         workflow = json.load(f)
 
+    # 设置节点21：加载定妆照
     workflow["21"]["inputs"]["image"] = uploaded_name
 
+    # 设置分辨率（如果提供）
+    if width is not None and height is not None:
+        if "18" in workflow and workflow["18"]["class_type"] == "EmptyFlux2LatentImage":
+            workflow["18"]["inputs"]["width"] = width
+            workflow["18"]["inputs"]["height"] = height
+            if log_callback:
+                log_callback(f"设置分镜图分辨率: {width}x{height}")
+        else:
+            if log_callback:
+                log_callback("警告：工作流中未找到节点18（EmptyFlux2LatentImage），无法设置分辨率")
+
+    # 设置节点35：拼接提示词
     prompt_lines = [p[1] for p in prompts]
     combined_prompt = "\n".join(prompt_lines)
     workflow["35"]["inputs"]["prompt"] = combined_prompt
@@ -254,7 +269,7 @@ def generate_batch(
     return saved_paths
 
 
-def generate_all_first_frames(work_dir: str, log_callback=None) -> List[str]:
+def generate_all_first_frames(work_dir: str, log_callback=None, width: Optional[int] = None, height: Optional[int] = None) -> List[str]:
     """
     生成所有镜头的首帧图
     返回生成的图片路径列表
@@ -288,13 +303,13 @@ def generate_all_first_frames(work_dir: str, log_callback=None) -> List[str]:
         if log_callback:
             log_callback(f"正在生成第 {i//MAX_BATCH_SIZE + 1} 批（{len(batch)} 个镜头）...")
         try:
-            saved = generate_batch(work_dir, asset_path, batch, log_callback=log_callback)
+            saved = generate_batch(work_dir, asset_path, batch, log_callback=log_callback, width=width, height=height)
             all_saved.extend(saved)
         except Exception as e:
             if log_callback:
                 log_callback(f"批量生成失败: {e}")
             return all_saved
-        time.sleep(2)  # 批次间稍作延迟
+        time.sleep(2)
 
     if log_callback:
         success_count = sum(1 for p in all_saved if p)

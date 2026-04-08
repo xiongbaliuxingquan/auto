@@ -22,6 +22,19 @@ class SimpleModeController:
         self.data = data
         self.app = app
 
+    def to_1080p(self, resolution: str):
+        """将用户选择的分辨率按比例转换为1080P（最小边1080）"""
+        try:
+            w, h = map(int, resolution.split('x'))
+            if w / h > 1.7:  # 16:9 或更宽
+                return 1920, 1080
+            elif h / w > 1.7:  # 9:16 或更高
+                return 1080, 1920
+            else:
+                return w, h
+        except:
+            return None, None
+
     def open_wizard(self):
         from gui.story_wizard import StoryWizard
         def on_finish(script, metadata):
@@ -54,29 +67,29 @@ class SimpleModeController:
         StoryWizard(self.app.root, self.app, on_finish)
 
     def generate_asset_images(self):
-        """生成所有角色的定妆照（资产图）"""
         work_dir = self.ui.work_dir
         if not work_dir:
-            messagebox.showerror("错误", "未设置工作目录，请先通过高级向导创建项目或打开历史项目")
+            messagebox.showerror("错误", "未设置工作目录")
             return
 
-        # 检查是否已有剧本（shots.txt）
         shots_path = os.path.join(work_dir, "shots.txt")
         if not os.path.exists(shots_path):
-            messagebox.showerror("错误", "未找到剧本文件，请先生成剧本（点击「生成剧本」）")
+            messagebox.showerror("错误", "未找到剧本文件，请先生成剧本")
             return
 
-        # 禁用按钮，避免重复点击
+        # 获取分辨率
+        resolution = self.app.resolution_var.get()
+        width, height = self.to_1080p(resolution)
+
         self.ui.set_button_state('disabled', 'disabled', 'disabled', 'disabled')
         self.ui.gen_asset_img_btn.config(text="生成中...")
         self.app.log("开始生成角色资产图（定妆照），请稍候...")
 
         def task():
             try:
-                generated = generate_all_assets(work_dir, log_callback=self.app.log)
+                generated = generate_all_assets(work_dir, log_callback=self.app.log, width=width, height=height)
                 if generated:
                     self.app.log(f"资产图生成完成，共 {len(generated)} 张")
-                    # 刷新分镜图库标签页
                     if hasattr(self.ui, 'storyboard_tab') and self.ui.storyboard_tab:
                         self.ui.storyboard_tab.refresh()
                 else:
@@ -98,6 +111,10 @@ class SimpleModeController:
         if not work_dir:
             messagebox.showerror("错误", "未设置工作目录")
             return
+        # 获取分辨率
+        resolution = self.app.resolution_var.get()
+        width, height = self.to_1080p(resolution)
+
         prompts_path = os.path.join(work_dir, "first_frame_prompts.json")
         
         # 禁用按钮
@@ -134,7 +151,7 @@ class SimpleModeController:
             from core.i2v.generate_first_frame_image import generate_all_first_frames
             self.app.root.after(0, lambda: self.app.log("开始生成首帧图，请稍候..."))
             try:
-                generate_all_first_frames(work_dir, log_callback=self.app.log)
+                generate_all_first_frames(work_dir, log_callback=self.app.log, width=width, height=height)
                 self.app.root.after(0, self._on_storyboard_done)
             except Exception as e:
                 self.app.root.after(0, lambda: self.app.log(f"生成首帧图失败: {e}"))

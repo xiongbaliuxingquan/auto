@@ -15,7 +15,7 @@ class StandardMode:
 
         # 工作流和分辨率选择区域
         self.config_frame = tk.Frame(self.frame)
-        self.create_config_area()
+        # self.create_config_area()
 
         # 按钮区域
         self.button_frame = tk.Frame(self.frame)
@@ -33,27 +33,6 @@ class StandardMode:
             text_widget = scrolledtext.ScrolledText(frame, wrap='word', font=('微软雅黑', 10))
             text_widget.pack(fill='both', expand=True, padx=5, pady=5)
             self.text_widgets[key] = text_widget
-
-    def create_config_area(self):
-        tk.Label(self.config_frame, text="工作流：").pack(side='left')
-        self.workflow_var = tk.StringVar(value="LTX2.3")
-        workflow_combo = ttk.Combobox(self.config_frame, textvariable=self.workflow_var,
-                                       values=["WAN2.2", "LTX2.3"], state="readonly", width=10)
-        workflow_combo.pack(side='left', padx=5)
-
-        tk.Label(self.config_frame, text="宽高比：").pack(side='left', padx=(20,0))
-        self.aspect_ratio_var = tk.StringVar(value="16:9")
-        aspect_combo = ttk.Combobox(self.config_frame, textvariable=self.aspect_ratio_var,
-                                     values=list(self.aspect_ratio_map.keys()), state="readonly", width=10)
-        aspect_combo.pack(side='left', padx=5)
-        aspect_combo.bind('<<ComboboxSelected>>', self.app.on_aspect_ratio_change)
-
-        tk.Label(self.config_frame, text="分辨率：").pack(side='left', padx=(5,0))
-        self.resolution_var = tk.StringVar()
-        self.resolution_combo = ttk.Combobox(self.config_frame, textvariable=self.resolution_var,
-                                             values=self.aspect_ratio_map["16:9"], state="readonly", width=12)
-        self.resolution_combo.pack(side='left', padx=5)
-        self.resolution_var.set("1280x720")
 
     def create_buttons(self):
         # 分割段落按钮（替代原来的开始处理）
@@ -93,15 +72,12 @@ class StandardMode:
         self.open_log_btn = tk.Button(self.button_frame, text="打开日志", command=self.app.open_log_folder, width=8)
         self.open_log_btn.pack(side='left', padx=2)
 
-        self.doctor_btn = tk.Button(self.button_frame, text="系统医生", command=self.app.run_system_doctor, width=8)
-        self.doctor_btn.pack(side='left', padx=2)
-
         self.continue_btn = tk.Button(self.button_frame, text="继续", command=self.app.continue_generation, state='disabled', width=8)
         self.continue_btn.pack(side='left', padx=2)
 
     def pack_widgets(self):
         self.notebook.pack(fill='both', expand=True, padx=5, pady=5)
-        self.config_frame.pack(fill='x', padx=5, pady=2)
+        # self.config_frame.pack(fill='x', padx=5, pady=2)
         self.button_frame.pack(fill='x', padx=5, pady=5)
 
     def on_aspect_ratio_change(self, event=None):
