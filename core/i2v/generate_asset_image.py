@@ -39,21 +39,23 @@ def sanitize_filename(name: str) -> str:
     name = re.sub(r'_+', '_', name)
     return name[:50]
 
-
+print("准备提交工作流...")
 def submit_workflow(api_url: str, workflow: dict) -> Optional[str]:
     url = f"{api_url.rstrip('/')}/prompt"
     payload = {"prompt": workflow}
     try:
         resp = requests.post(url, json=payload, timeout=30)
         if resp.status_code == 200:
-            return resp.json()['prompt_id']
+            result = resp.json()
+            print(f"[DEBUG] Workflow submitted successfully. Full API response: {result}") # <--- 添加这一行
+            return result.get('prompt_id')
         else:
             print(f"提交失败: {resp.status_code} {resp.text}")
             return None
     except Exception as e:
         print(f"提交异常: {e}")
         return None
-
+print(f"模板路径: {WORKFLOW_TEMPLATE}, 存在: {os.path.exists(WORKFLOW_TEMPLATE)}")
 
 def download_image(api_url: str, output_info: dict, save_path: str) -> bool:
     filename = output_info.get('filename')
@@ -139,6 +141,7 @@ def generate_asset_image(
     width: Optional[int] = None,
     height: Optional[int] = None
 ) -> Optional[str]:
+    print(f"API URL: {api_url}")
     """生成单个角色定妆照，支持自定义提示词"""
     if api_url is None:
         api_url = config_manager.COMFYUI_API_URL
@@ -259,11 +262,14 @@ def generate_asset_image(
                     history = data
                     break
         except Exception as e:
+            msg = f"查询异常: {e}"
             if log_callback:
-                log_callback(f"查询异常: {e}")
+                log_callback(msg)
             else:
-                print(f"查询异常: {e}")
-        time.sleep(3)
+                print(msg)
+            import traceback
+            traceback.print_exc()   # 打印完整堆栈
+            # 继续重试，不要 break
 
     if not history:
         msg = "错误：等待超时或任务失败（提示词已保存）"
@@ -326,7 +332,9 @@ def generate_asset_image_with_prompt(
 def generate_all_assets(work_dir: str, log_callback=None, width: Optional[int] = None, height: Optional[int] = None) -> List[str]:
     """批量生成所有角色的资产图（使用默认提示词）"""
     style, characters = parse_global_assets(work_dir)
+    print(f"DEBUG: characters = {characters}")
     if not characters:
+        print("DEBUG: characters is empty, exiting")
         if log_callback:
             log_callback("未从全局资产中提取到任何角色")
         return []

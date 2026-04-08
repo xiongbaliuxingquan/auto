@@ -188,8 +188,24 @@ def generate_single_video(
     if log_callback:
         log_callback(f"设置随机种子: {seed}")
 
-    # 可选：设置分辨率节点54（TTResolutionSelector），工作流中已通过节点48缩放图像，但节点54可能影响输出尺寸
-    # 为了灵活性，我们也可以修改节点54的分辨率，但默认保持原样，由首帧图决定。
+    # 设置分辨率（节点54 TTResolutionSelector）
+    if width is not None and height is not None:
+        if "54" in workflow and workflow["54"]["class_type"] == "TTResolutionSelector":
+            custom_w = width // 2
+            custom_h = height // 2
+            workflow["54"]["inputs"]["use_custom_resolution"] = True
+            workflow["54"]["inputs"]["custom_width"] = custom_w
+            workflow["54"]["inputs"]["custom_height"] = custom_h
+            if log_callback:
+                log_callback(f"设置图生视频分辨率: {width}x{height} -> custom {custom_w}x{custom_h}")
+        else:
+            if log_callback:
+                log_callback("警告：工作流中未找到节点54（TTResolutionSelector），无法设置分辨率")
+    print(f"节点54设置: use_custom_resolution={workflow['54']['inputs'].get('use_custom_resolution')}, custom_width={workflow['54']['inputs'].get('custom_width')}, custom_height={workflow['54']['inputs'].get('custom_height')}")
+
+    # 提交工作流
+    if log_callback:
+        log_callback("提交图生视频工作流...")
 
     # 提交工作流
     if log_callback:

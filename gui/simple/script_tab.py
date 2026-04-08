@@ -19,10 +19,11 @@ class ScriptTab:
         left_frame = ttk.Frame(self.paned)
         self.paned.add(left_frame, weight=3)
 
-        columns = ('scene', 'shot', 'description', 'action')
+        columns = ('scene', 'shot', 'duration', 'description', 'action')
         self.tree = ttk.Treeview(left_frame, columns=columns, show='headings')
         self.tree.heading('scene', text='场次')
         self.tree.heading('shot', text='镜头序号')
+        self.tree.heading('duration', text='时长(秒)')
         self.tree.heading('description', text='场景描述')
         self.tree.heading('action', text='镜头描述')
         self.tree.column('scene', width=80, anchor='center')
@@ -63,8 +64,8 @@ class ScriptTab:
                 shot_id = f"{scene_id}-{idx}"
                 scene_desc = shot.get('scene', '')[:50]
                 action_desc = shot.get('visual', '')[:50]
-                self.tree.insert('', 'end', values=(scene_id, shot_id, scene_desc, action_desc),
-                                 tags=(scene_id, idx-1))
+                duration = shot.get('duration', 10.0)
+                self.tree.insert('', 'end', values=(scene_id, shot_id, duration, scene_desc, action_desc), tags=(scene_id, idx-1))
 
     def _get_selected_shot(self):
         """获取当前选中的镜头，返回 (scene_index, shot_index, scene_dict, shot_dict)"""

@@ -8,6 +8,7 @@ import json
 import subprocess
 import sys
 import glob
+import time
 from datetime import datetime
 
 from utils import config_manager
@@ -66,7 +67,28 @@ class SimpleModeController:
             self.app.log(f"项目已保存至: {work_dir}")
         StoryWizard(self.app.root, self.app, on_finish)
 
+    def _confirm_resolution(self, action_name):
+        now = time.time()
+        if hasattr(self, '_last_confirm_time') and now - self._last_confirm_time < 1:
+            return self._last_confirm_result
+        resolution = self.app.resolution_var.get()
+        aspect = self.app.aspect_ratio_var.get()
+        if not resolution:
+            return True
+        msg = f"当前选择：宽高比 {aspect}，分辨率 {resolution}\n是否继续{action_name}？"
+        result = messagebox.askyesno("确认", msg)
+        self._last_confirm_time = now
+        self._last_confirm_result = result
+        return result
+
     def generate_asset_images(self):
+        print("generate_asset_images 被调用")
+        if not self._confirm_resolution("生成资产图"):
+            print("用户取消了生成")
+            return
+        print("确认继续")
+        if not self._confirm_resolution("生成资产图"):
+            return
         work_dir = self.ui.work_dir
         if not work_dir:
             messagebox.showerror("错误", "未设置工作目录")
@@ -86,19 +108,26 @@ class SimpleModeController:
         self.app.log("开始生成角色资产图（定妆照），请稍候...")
 
         def task():
+            print("=== task 线程开始 ===")
             try:
                 generated = generate_all_assets(work_dir, log_callback=self.app.log, width=width, height=height)
                 if generated:
                     self.app.log(f"资产图生成完成，共 {len(generated)} 张")
                     if hasattr(self.ui, 'storyboard_tab') and self.ui.storyboard_tab:
-                        self.ui.storyboard_tab.refresh()
+                        if self.ui.storyboard_tab.work_dir != work_dir:
+                            self.ui.storyboard_tab.set_work_dir(work_dir)
+                        self.app.root.after(500, self.ui.storyboard_tab.refresh)
                 else:
                     self.app.log("资产图生成失败，请检查日志")
             except Exception as e:
+                print(f"线程异常: {e}")
+                import traceback
+                traceback.print_exc()
                 self.app.log(f"资产图生成异常: {e}")
             finally:
                 self.app.root.after(0, self._reset_asset_buttons)
 
+        print("准备启动线程")  # 这行会打印在 GUI 控制台（因为 print 直接输出到 CMD）
         threading.Thread(target=task, daemon=True).start()
 
     def _reset_asset_buttons(self):
@@ -106,14 +135,25 @@ class SimpleModeController:
         self.ui.gen_asset_img_btn.config(text="2. 生成资产图")
 
     def generate_storyboard(self):
-        """生成所有镜头的首帧图（如果提示词文件不存在则自动生成）"""
+        if not self._confirm_resolution("生成分镜图"):
+            return
         work_dir = self.ui.work_dir
         if not work_dir:
             messagebox.showerror("错误", "未设置工作目录")
             return
+
         # 获取分辨率
         resolution = self.app.resolution_var.get()
         width, height = self.to_1080p(resolution)
+
+        # 获取所有角色名（从 assets_global.txt）
+        from core.i2v.generate_asset_image import parse_global_assets
+        _, chars_dict = parse_global_assets(work_dir)
+        all_characters = list(chars_dict.keys()) if chars_dict else []
+        if not all_characters:
+            self.app.log("警告：未从全局资产中提取到角色，将使用默认单角色模式")
+        else:
+            self.app.log(f"检测到角色列表: {all_characters}")
 
         prompts_path = os.path.join(work_dir, "first_frame_prompts.json")
         
@@ -151,7 +191,7 @@ class SimpleModeController:
             from core.i2v.generate_first_frame_image import generate_all_first_frames
             self.app.root.after(0, lambda: self.app.log("开始生成首帧图，请稍候..."))
             try:
-                generate_all_first_frames(work_dir, log_callback=self.app.log, width=width, height=height)
+                generate_all_first_frames(work_dir, log_callback=self.app.log, width=width, height=height, all_characters=all_characters)
                 self.app.root.after(0, self._on_storyboard_done)
             except Exception as e:
                 self.app.root.after(0, lambda: self.app.log(f"生成首帧图失败: {e}"))
@@ -204,6 +244,28 @@ class SimpleModeController:
         work_dir = self.ui.work_dir
         if not work_dir:
             return
+
+        # 获取分辨率
+        resolution = self.app.resolution_var.get()
+        width, height = None, None
+        if resolution and 'x' in resolution:
+            try:
+                w, h = map(int, resolution.split('x'))
+                # 根据宽高比转换为1080P（与批量生成保持一致）
+                if w / h > 1.7:  # 16:9
+                    width, height = 1920, 1080
+                elif h / w > 1.7:  # 9:16
+                    width, height = 1080, 1920
+                else:
+                    width, height = w, h
+            except:
+                pass
+
+        # 获取所有角色列表
+        from core.i2v.generate_asset_image import parse_global_assets
+        _, chars_dict = parse_global_assets(work_dir)
+        all_characters = list(chars_dict.keys()) if chars_dict else []
+
         # 从 first_frame_prompts.json 读取该镜头的提示词
         prompts_path = os.path.join(work_dir, "first_frame_prompts.json")
         import json
@@ -217,12 +279,13 @@ class SimpleModeController:
         if not prompt:
             self.app.log(f"未找到镜头 {shot_id} 的提示词")
             return
-        # 调用单个生成函数
+
+        # 调用单个生成函数，传递分辨率
         from core.i2v.generate_first_frame_image import generate_single_frame
         self.app.log(f"正在重新生成镜头 {shot_id}...")
         def task():
             try:
-                generate_single_frame(work_dir, shot_id, prompt, log_callback=self.app.log)
+                generate_single_frame(work_dir, shot_id, prompt, log_callback=self.app.log, all_characters=all_characters, width=width, height=height)
                 self.app.root.after(0, lambda: self.ui.storyboard_tab.refresh())
             except Exception as e:
                 self.app.root.after(0, lambda: self.app.log(f"重绘失败: {e}"))
@@ -511,6 +574,8 @@ class SimpleModeController:
 
     # ========== 视频生成 ==========
     def confirm_and_generate(self):
+        if not self._confirm_resolution("生成视频"):
+            return
         """生成视频（根据模式分流）"""
         work_dir = self.ui.work_dir
         if not work_dir:
