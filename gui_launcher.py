@@ -21,6 +21,7 @@ from gui.common_widgets import CommonWidgets
 from gui.top_toolbar import TopToolbar
 from gui.audio_panel import AudioPanel
 from tkinter import scrolledtext
+from gui.image_panel import ImagePanel
 
 ASPECT_RATIO_MAP = {
     "16:9": ["640x360", "854x480", "1280x720", "1920x1080", "2560x1440"],
@@ -108,6 +109,13 @@ class App:
         self.audio_frame = ttk.Frame(self.content_frame)
         self.video_frame = ttk.Frame(self.content_frame)
         self.edit_frame = ttk.Frame(self.content_frame)
+        self.image_frame = ttk.Frame(self.content_frame)   # 新增
+        
+        # 创建图像面板
+        from gui.image_panel import ImagePanel
+        self.image_panel = ImagePanel(self.image_frame, self)
+        self.image_panel.pack(fill='both', expand=True)
+        self.image_frame.pack_forget()
 
         # 故事模块：包含标准模式和一键成片面板
         self.standard_mode = StandardMode(self.story_frame, self, ASPECT_RATIO_MAP)
@@ -181,6 +189,16 @@ class App:
             self.root.after_cancel(self._resize_timer)
         self._delayed_refresh()
 
+    def show_image(self):
+        self.hide_all_modules()
+        self.image_frame.pack(fill='both', expand=True)
+        self.current_module = "图像"
+        if self.work_dir:
+            self.image_panel.set_work_dir(self.work_dir)
+        else:
+            self.image_panel.set_work_dir(None)
+        self.image_panel.refresh()
+
     def _delayed_refresh(self):
         self.root.update_idletasks()
         # 如果有 canvas 需要刷新滚动区域，可以调用
@@ -208,6 +226,7 @@ class App:
     def create_sidebar(self):
         ttk.Button(self.sidebar, text="📖 故事", command=self.show_story).pack(fill='x', padx=10, pady=5)
         ttk.Button(self.sidebar, text="🎵 音频", command=self.show_audio).pack(fill='x', padx=10, pady=5)
+        ttk.Button(self.sidebar, text="🖼️ 图像", command=self.show_image).pack(fill='x', padx=10, pady=5)
         ttk.Button(self.sidebar, text="🎬 视频", command=self.show_video).pack(fill='x', padx=10, pady=5)
         ttk.Button(self.sidebar, text="✂️ 剪辑", command=self.show_edit).pack(fill='x', padx=10, pady=5)
 
@@ -251,6 +270,7 @@ class App:
         self.audio_frame.pack_forget()
         self.video_frame.pack_forget()
         self.edit_frame.pack_forget()
+        self.image_frame.pack_forget()
 
     def sync_script_to_audio(self):
         """将当前口播稿文本同步到音频面板"""
@@ -273,8 +293,7 @@ class App:
         btn_frame.pack(fill='x', padx=5, pady=5)
 
         ttk.Button(btn_frame, text="运行工作流", command=self.run_workflow, width=12).pack(side='left', padx=2)
-        ttk.Button(btn_frame, text="生成首帧提示词", command=self.run_first_frame_generation, width=14).pack(side='left', padx=2)
-        ttk.Button(btn_frame, text="选择或编辑提示词", command=self.open_shot_editor, width=16).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="选择或编辑视频提示词", command=self.open_shot_editor, width=16).pack(side='left', padx=2)
         ttk.Button(btn_frame, text="视频精确裁剪", command=self.run_video_align, width=12).pack(side='left', padx=2)
 
         self.continue_btn = ttk.Button(btn_frame, text="继续", command=self.continue_generation, state='disabled', width=8)
@@ -978,6 +997,8 @@ class App:
         self.status_label.config(text="倒计时：20秒后自动运行工作流")
         self.standard_mode.run_workflow_btn.config(state='normal', text="运行工作流 (20s)")
         self.standard_mode.first_frame_btn.config(state='normal')
+        
+        # 强制重新加载镜头信息（从易读版文件）
         temp_manager = comfyui_manager.ComfyUIManager("", "")
         readable_file = temp_manager.get_latest_readable_file(self.work_dir)
         if readable_file:
@@ -985,15 +1006,36 @@ class App:
             if self.shots_info:
                 self.standard_mode.select_edit_btn.config(state='normal')
                 self.log(f"找到 {len(self.shots_info)} 个镜头，可点击「选择或编辑提示词」进行调整")
+        
         if self.toolbar.mode_type_var.get() == "一键成片":
             self.simple_mode.show_countdown(20)
             if hasattr(self.simple_mode, 'edit_btn'):
                 self.simple_mode.edit_btn.config(state='normal')
             if hasattr(self.simple_mode, 'run_workflow_btn'):
                 self.simple_mode.run_workflow_btn.config(state='normal')
+        
         self.timer.start(20000)
+        
+        # 刷新视频面板（延迟执行，确保文件已完全写入）
+        if hasattr(self, 'video_panel'):
+            self.video_panel.set_work_dir(self.work_dir)
+            self.root.after(500, self.video_panel.refresh)
 
     def open_shot_editor(self):
+        # 强制重新从易读版文件加载镜头信息，确保提示词是最新的
+        if self.work_dir:
+            temp_manager = comfyui_manager.ComfyUIManager("", "")
+            readable_file = temp_manager.get_latest_readable_file(self.work_dir)
+            if readable_file:
+                new_shots_info = temp_manager.get_shots_info(readable_file)
+                if new_shots_info:
+                    self.shots_info = new_shots_info
+                    self.log(f"已从易读版文件重新加载镜头信息，共 {len(self.shots_info)} 个镜头")
+                else:
+                    self.log("警告：从易读版文件加载镜头信息失败")
+            else:
+                self.log("警告：未找到易读版分镜文件")
+
         if not self.shots_info:
             messagebox.showerror("错误", "没有镜头信息，请先完成前三步或打开历史项目")
             return
@@ -1036,6 +1078,28 @@ class App:
             self.log("取消编辑")
 
     def run_workflow(self):
+        mode = self.toolbar.mode_var.get()
+        if not messagebox.askyesno("确认", f"当前模式为【{mode}】，是否继续生成视频？"):
+            return
+        # 如果是图生视频模式，调用视频面板的专用方法
+        if self.toolbar.mode_var.get() == "图生视频":
+            # 调用视频面板的图生视频方法
+            self.video_panel.run_i2v_workflow(
+                work_dir=self.work_dir,
+                shots_info=self.shots_info,
+                resolution=self.resolution_var.get(),
+                log_callback=self.log,
+                on_finish=self.workflow_done
+            )
+            # 禁用相关按钮
+            self.standard_mode.run_workflow_btn.config(state='disabled', text="运行工作流")
+            self.standard_mode.first_frame_btn.config(state='disabled')
+            self.standard_mode.select_edit_btn.config(state='disabled')
+            self.status_label.config(text="正在生成视频...")
+            self.log("\n========== 图生视频 ==========")
+            return
+
+        # 以下是原有的文生视频逻辑（保持不变）
         if not self.shots_info:
             messagebox.showwarning("提示", "请先点击生成口播稿点击后口播稿预览窗出现内容后,再点击下方确认并生成视频,待倒计时时点击我才能进入流程。")
             return
@@ -1063,7 +1127,6 @@ class App:
             self.log("继续模式：将生成剩余镜头")
         elif self.selected_shots_ids is not None:
             selected_ids = self.selected_shots_ids
-            # 如果是重试，重置 selected_shots_ids 避免后续影响（但会在 workflow_done 中重置）
         else:
             selected_ids = None
 
@@ -1071,35 +1134,31 @@ class App:
         self.log("\n========== 4/4: 生成视频 ==========")
 
         api_url = config_manager.COMFYUI_API_URL
-        # 创建带时间戳的视频文件夹
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         video_folder_name = "视频"
         output_dir = os.path.join(self.work_dir, video_folder_name)
         os.makedirs(output_dir, exist_ok=True)
 
-        # 定义镜头生成完成回调
         def on_shot_done(shot_id):
-            # 调用所有注册的回调
             for cb in self.video_generation_callbacks:
                 try:
                     cb(shot_id)
                 except Exception as e:
                     self.log(f"视频生成回调执行失败: {e}")
 
-        # 判断是否为一键成片模式
         is_simple_mode = (self.toolbar.mode_type_var.get() == "一键成片")
         manager = comfyui_manager.ComfyUIManager(
             api_url=api_url,
             output_base_dir=output_dir,
             on_shot_generated=on_shot_done,
-            auto_trim=is_simple_mode   # 仅一键成片模式启用裁剪
+            auto_trim=is_simple_mode
         )
         manager.set_log_callback(self.log)
 
         def thread_func():
             try:
                 success, msg = manager.run(self.story_title, self.work_dir, resolution, template_path,
-                                           selected_shots=selected_ids)
+                                        selected_shots=selected_ids)
                 if success:
                     self.root.after(0, self.workflow_done)
                 else:

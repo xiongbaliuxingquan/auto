@@ -193,8 +193,12 @@ class StoryboardTab:
         prompt_text.insert('1.0', prompt)
         prompt_text.pack(side='left', fill='both', expand=True, padx=5)
         
-        img_label = tk.Label(row_frame, bg='gray', width=100, height=100)
-        img_label.pack(side='left', padx=5)
+        # 缩略图容器（固定大小 100x100）
+        thumb_frame = tk.Frame(row_frame, width=100, height=100, bg='lightgray')
+        thumb_frame.pack(side='left', padx=5)
+        thumb_frame.pack_propagate(False)
+        img_label = tk.Label(thumb_frame, bg='lightgray')
+        img_label.pack(fill='both', expand=True)
         
         btn_frame = ttk.Frame(row_frame)
         btn_frame.pack(side='left', padx=5)

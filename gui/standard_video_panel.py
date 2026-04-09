@@ -5,6 +5,9 @@ import os
 import glob
 import re
 
+from utils import config_manager
+from core.i2v.cfy_i2v import generate_single_video
+
 class StandardVideoPanel:
     def __init__(self, parent, app):
         self.app = app
@@ -43,6 +46,7 @@ class StandardVideoPanel:
         self.refresh_btn.pack(side='left', padx=2)
 
         self.tree.bind('<<TreeviewSelect>>', self.on_select)
+        self.tree.bind('<Double-1>', lambda event: self.preview_shot())
 
         # 注册视频生成回调
         if hasattr(app, 'register_video_generation_callback'):
@@ -53,42 +57,133 @@ class StandardVideoPanel:
         self.video_dir = os.path.join(work_dir, "视频")
         self.refresh()
 
+    def run_i2v_workflow(self, work_dir, shots_info, resolution, log_callback, on_finish=None):
+        import threading
+        import os
+        from tkinter import messagebox
+        from utils import config_manager
+        import core.i2v.cfy_i2v as cfy_i2v
+
+        try:
+            width, height = map(int, resolution.split('x'))
+        except:
+            log_callback("分辨率格式错误")
+            return False
+
+        video_dir = os.path.join(work_dir, "视频")
+        os.makedirs(video_dir, exist_ok=True)
+
+        # 检查首帧图
+        images_dir = os.path.join(work_dir, "images")
+        missing_shots = []
+        for shot in shots_info:
+            shot_id = shot['id']
+            img_path = os.path.join(images_dir, f"{shot_id}.png")
+            if not os.path.exists(img_path):
+                missing_shots.append(shot_id)
+        if missing_shots:
+            log_callback(f"以下镜头缺少首帧图：{', '.join(missing_shots)}")
+            messagebox.showerror("错误", "缺少首帧图，请先在图像面板生成")
+            return False
+
+        # 工作流模板
+        workflow = self.app.workflow_var.get()
+        if workflow == "WAN2.2":
+            log_callback("WAN2.2 暂不支持图生视频，请选择 LTX2.3")
+            messagebox.showerror("错误", "WAN2.2 不支持图生视频")
+            return False
+        else:
+            template_file = "LTX2.3图生API.json"
+
+        api_url = config_manager.COMFYUI_API_URL
+        total = len(shots_info)
+        completed = 0
+        errors = []
+
+        def task():
+            nonlocal completed
+            for idx, shot in enumerate(shots_info, start=1):
+                shot_id = shot['id']
+                image_path = os.path.join(images_dir, f"{shot_id}.png")
+                prompt = shot.get('prompt', '')
+                if not prompt:
+                    log_callback(f"镜头 {shot_id} 缺少提示词，跳过")
+                    errors.append(shot_id)
+                    continue
+                duration = shot.get('duration', 10)
+                # 显示进度
+                log_callback(f"正在生成镜头 {idx}/{total}：{shot_id}...")
+                try:
+                    video_path = cfy_i2v.generate_single_video(
+                        work_dir=work_dir,
+                        shot_id=shot_id,
+                        image_path=image_path,
+                        prompt=prompt,
+                        duration=duration,
+                        width=width,
+                        height=height,
+                        api_url=api_url,
+                        log_callback=log_callback,
+                        auto_trim=True
+                    )
+                    if video_path:
+                        completed += 1
+                        log_callback(f"镜头 {shot_id} 生成成功")
+                    else:
+                        errors.append(shot_id)
+                except Exception as e:
+                    log_callback(f"镜头 {shot_id} 生成异常: {e}")
+                    errors.append(shot_id)
+            log_callback(f"图生视频完成，成功 {completed}/{total}，失败: {errors}")
+            if on_finish:
+                on_finish()
+            if errors:
+                messagebox.showwarning("部分失败", f"以下镜头生成失败：{', '.join(errors)}")
+
+        threading.Thread(target=task, daemon=True).start()
+        return True
+
     def refresh(self):
         """刷新视频列表"""
         for item in self.tree.get_children():
             self.tree.delete(item)
 
-        if not self.work_dir or not os.path.isdir(self.video_dir):
+        # 确保工作目录已设置（优先使用 self.work_dir，否则从 app 获取）
+        work_dir = self.work_dir or (self.app.work_dir if hasattr(self.app, 'work_dir') else None)
+        if not work_dir:
+            self.tree.insert('', 'end', values=('', '未设置工作目录', ''))
+            return
+
+        # 确保视频目录存在
+        video_dir = os.path.join(work_dir, "视频")
+        if not os.path.isdir(video_dir):
             self.tree.insert('', 'end', values=('', '未找到视频文件夹', ''))
             return
 
-        # 获取镜头信息（优先从 app.shots_info）
-        shots_info = self.app.shots_info
-        if not shots_info:
-            # 降级：从易读版分镜文件读取
-            pattern = os.path.join(self.work_dir, "分镜结果_易读版_*.txt")
-            files = glob.glob(pattern)
-            if files:
-                readable_file = max(files, key=os.path.getmtime)
-                from core.comfyui_manager import ComfyUIManager
-                temp_manager = ComfyUIManager("", "")
-                shots_info = temp_manager.get_shots_info(readable_file)
-
+        # 强制重新从易读版文件读取镜头信息（确保最新，不依赖 app.shots_info 缓存）
+        pattern = os.path.join(work_dir, "分镜结果_易读版_*.txt")
+        files = glob.glob(pattern)
+        shots_info = None
+        if files:
+            readable_file = max(files, key=os.path.getmtime)
+            from core.comfyui_manager import ComfyUIManager
+            temp_manager = ComfyUIManager("", "")
+            shots_info = temp_manager.get_shots_info(readable_file)
         if not shots_info:
             self.tree.insert('', 'end', values=('', '未找到镜头信息', ''))
             return
 
         # 扫描视频文件
         video_files = {}
-        for f in os.listdir(self.video_dir):
+        for f in os.listdir(video_dir):
             if f.startswith("镜头") and (f.endswith(".mp4") or f.endswith(".gif")):
                 shot_id = f[2:].rsplit('.', 1)[0]
-                video_files[shot_id] = os.path.join(self.video_dir, f)
+                video_files[shot_id] = os.path.join(video_dir, f)
 
         self.shots = []
         for shot in shots_info:
             shot_id = shot['id']
-            description = shot.get('visual', '')[:60]  # 使用视觉描述
+            description = shot.get('visual', '')[:60]   # 视觉描述（用于列表显示）
             video_path = video_files.get(shot_id)
             status = "已生成" if video_path else "待生成"
             self.shots.append({

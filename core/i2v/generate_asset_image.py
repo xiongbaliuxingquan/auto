@@ -139,9 +139,9 @@ def generate_asset_image(
     custom_prompt: Optional[str] = None,
     log_callback=None,
     width: Optional[int] = None,
-    height: Optional[int] = None
+    height: Optional[int] = None,
+    output_filename: Optional[str] = None   # 新增参数
 ) -> Optional[str]:
-    print(f"API URL: {api_url}")
     """生成单个角色定妆照，支持自定义提示词"""
     if api_url is None:
         api_url = config_manager.COMFYUI_API_URL
@@ -160,10 +160,15 @@ def generate_asset_image(
     else:
         print(f"[DEBUG] 正面提示词: {positive_prompt[:100]}...")
 
-    # 提前保存提示词文件（无论后续是否成功）
-    safe_name = sanitize_filename(character_name)
-    save_path = os.path.join(work_dir, "images", f"{safe_name}.png")
-    prompt_save_path = save_path.replace('.png', '_prompt.txt')
+    # 确定保存路径（根据是否提供 output_filename 决定）
+    if output_filename:
+        save_path = os.path.join(work_dir, "images", output_filename)
+        prompt_save_path = save_path.replace('.png', '_prompt.txt')
+    else:
+        safe_name = sanitize_filename(character_name)
+        save_path = os.path.join(work_dir, "images", f"{safe_name}.png")
+        prompt_save_path = save_path.replace('.png', '_prompt.txt')
+    
     os.makedirs(os.path.dirname(prompt_save_path), exist_ok=True)
     with open(prompt_save_path, 'w', encoding='utf-8') as pf:
         pf.write(positive_prompt)
@@ -268,8 +273,9 @@ def generate_asset_image(
             else:
                 print(msg)
             import traceback
-            traceback.print_exc()   # 打印完整堆栈
+            traceback.print_exc()
             # 继续重试，不要 break
+        time.sleep(3)
 
     if not history:
         msg = "错误：等待超时或任务失败（提示词已保存）"

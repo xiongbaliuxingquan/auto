@@ -43,7 +43,7 @@ class TopToolbar:
 
         # 模式（文生/图生）
         tk.Label(row1, text="模式：").pack(side='left', padx=(20,0))
-        self.mode_var = tk.StringVar(value="文生视频")
+        self.mode_var = tk.StringVar(value="图生视频")
         mode_menu = ttk.Combobox(row1, textvariable=self.mode_var,
                                  values=["文生视频", "图生视频"], state="readonly", width=12)
         mode_menu.pack(side='left', padx=5)

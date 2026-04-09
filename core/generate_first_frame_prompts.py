@@ -1,5 +1,6 @@
 # generate_first_frame_prompts.py
 import os
+import io
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))  # 将项目根目录加入路径
 import re
@@ -59,7 +60,8 @@ def generate_first_frame_prompt(visual, duration, emotion):
 1. 必须严格基于【视觉核心参考】中的描述，可以适当细化，但不得改变核心意象、风格和情绪。
 2. 聚焦于静态画面，突出构图、光影、细节、情绪。
 3. 不要包含任何关于镜头运动、时间推移的词语。
-4. 输出的提示词应为纯净文本，无任何额外标记。
+4. 理解整个视频，生成的图片是视频的第一帧，后续发展通过此帧开始。
+5. 输出的提示词应为纯净文本，无任何额外标记。请在提示词末尾加上“超高清，超高细节”。
 
 请输出首帧提示词：
 """
@@ -89,13 +91,13 @@ def generate_first_frame_prompt(visual, duration, emotion):
         return f"[生成失败] 异常: {str(e)}"
 
 def worker(item, idx):
-    """
-    并发工作函数：处理一个镜头，返回 (para_id, shot_idx, original_content, video_prompt, chinese, english)
-    """
     para_id, shot_idx, original_content, visual, duration, emotion = item
+    print(f"正在生成镜头 {para_id}-{shot_idx} 的首帧提示词...")
+    sys.stdout.flush()
     video_prompt = ""
     chinese = generate_first_frame_prompt(visual, duration, emotion)
     english = translation_utils.translate_text(chinese)
+    print(f"镜头 {para_id}-{shot_idx} 生成完成")
     return (para_id, shot_idx, original_content, video_prompt, chinese, english)
 
 def main():
@@ -171,6 +173,17 @@ def main():
         for row in csv_rows:
             f.write(row["英文首帧提示词"] + ';\n')
     print(f"纯文本列表已生成: {txt_file}")
+
+    # 在 main 函数中，生成 csv_rows 之后，添加：
+    json_output = []
+    for row in csv_rows:
+        json_output.append({
+            "shot_id": row["序号"],
+            "prompt": row["中文首帧提示词"]   # 或者使用英文？标准模式中首帧图提示词应该用中文，因为文生图使用中文提示词
+        })
+    json_path = os.path.join(work_dir, "first_frame_prompts.json")
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(json_output, f, ensure_ascii=False, indent=2)
 
 if __name__ == "__main__":
     main()
