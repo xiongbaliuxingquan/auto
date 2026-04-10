@@ -87,8 +87,6 @@ class SimpleModeController:
             print("用户取消了生成")
             return
         print("确认继续")
-        if not self._confirm_resolution("生成资产图"):
-            return
         work_dir = self.ui.work_dir
         if not work_dir:
             messagebox.showerror("错误", "未设置工作目录")
@@ -207,25 +205,33 @@ class SimpleModeController:
         self.ui.set_button_state('normal', 'normal', 'normal', 'disabled')
         self.ui.gen_storyboard_btn.config(text="3. 生成分镜图")
 
-    def regenerate_asset_with_prompt(self, custom_prompt):
+    def regenerate_asset_with_prompt(self, custom_prompt, character_name=None):
+        print("=== regenerate_asset_with_prompt 被调用 ===")
         work_dir = self.ui.work_dir
         if not work_dir:
             self.app.log("工作目录未设置")
             return
+        # 获取分辨率
+        resolution = self.app.resolution_var.get()
+        width, height = self.to_1080p(resolution)
+        print(f"分辨率: {resolution}, 转换后: {width}x{height}")
         # 获取角色信息
         style, characters = parse_global_assets(work_dir)
         if not characters:
             self.app.log("未找到角色信息")
             return
-        # 取第一个角色（简化，实际可让用户选择）
-        char_name, char_desc = list(characters.items())[0]
+        # 如果指定了角色名，则使用该角色；否则使用第一个
+        if character_name and character_name in characters:
+            char_desc = characters[character_name]
+        else:
+            character_name, char_desc = list(characters.items())[0]
         scene = parse_paragraph1_assets(work_dir)
-        self.app.log("正在重新生成定妆照...")
+        self.app.log(f"正在重新生成定妆照: {character_name}...")
         def task():
             try:
-                result = generate_asset_image_with_prompt(work_dir, char_name, char_desc, scene, style, custom_prompt)
+                result = generate_asset_image_with_prompt(work_dir, character_name, char_desc, scene, style, custom_prompt, width=width, height=height)
                 if result:
-                    self.app.log("定妆照更新成功")
+                    self.app.log(f"{character_name} 定妆照更新成功")
                     self.app.root.after(0, lambda: self.ui.storyboard_tab.refresh())
                 else:
                     self.app.log("定妆照更新失败")
@@ -296,6 +302,9 @@ class SimpleModeController:
         work_dir = self.ui.work_dir
         if not work_dir:
             return
+        resolution = self.app.resolution_var.get()
+        width, height = self.to_1080p(resolution)
+        print(f"分辨率: {resolution}, 转换后: {width}x{height}")
         from core.i2v.generate_asset_image import generate_all_assets
         self.app.log("正在重新生成定妆照...")
         def task():
@@ -732,7 +741,8 @@ class SimpleModeController:
                         shot_id=shot_id,
                         image_path=image_path,
                         prompt=prompt,
-                        duration=duration,
+                        duration=duration + 1,
+                        target_duration=duration,
                         width=width,
                         height=height,
                         log_callback=self.app.log,

@@ -290,7 +290,7 @@ class ImagePanel(ttk.Frame):
         
         # 确认分辨率
         resolution = self.app.resolution_var.get()
-        width, height = self.app.to_1080p(resolution)  # 添加转换
+        width, height = self.app.simple_mode.controller.to_1080p(resolution)  # 添加转换
         if not resolution:
             messagebox.showerror("错误", "请先选择分辨率")
             return

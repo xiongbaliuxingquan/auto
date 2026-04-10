@@ -196,7 +196,7 @@ class SimpleMode:
         # 标签页
         self.notebook = ttk.Notebook(self.frame)
         self.notebook.pack(fill='both', expand=True, padx=5, pady=5)
-        
+                
         from gui.simple.story_tab import StoryTab
         self.story_tab = StoryTab(self.notebook, self.controller)
         self.notebook.add(self.story_tab.frame, text="故事")

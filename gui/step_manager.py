@@ -30,7 +30,7 @@ class StepManager:
         base_steps = [
             (os.path.join(project_root, "core", "txt_to_json.py"), "1/3: 转换文稿为JSON", [os.path.join(work_dir, input_filename), story_title, self.mode, work_dir]),
             (os.path.join(project_root, "core", "auto_split_deepseek.py"), "2/3: 生成分镜设计", [work_dir]),
-            (os.path.join(project_root, "core", "extract_prompts.py"), "3/3: 提取提示词并翻译", [work_dir])
+            # (os.path.join(project_root, "core", "extract_prompts.py"), "3/3: 提取提示词并翻译", [work_dir])
         ]
 
         # 检查是否有字幕文件，如果有，则在第一步后插入字幕优化步骤

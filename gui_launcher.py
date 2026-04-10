@@ -24,13 +24,13 @@ from tkinter import scrolledtext
 from gui.image_panel import ImagePanel
 
 ASPECT_RATIO_MAP = {
-    "16:9": ["640x360", "854x480", "1280x720", "1920x1080", "2560x1440"],
+    "16:9": ["1280x720", "1920x1080", "2560x1440", "640x360", "854x480", ],
+    "9:16": ["720x1280", "1080x1920", "1440x2560", "360x640", "480x854"],
     "4:3": ["640x480", "800x600", "1024x768", "1280x960", "1440x1080", "1600x1200", "2048x1536"],
+    "3:4": ["480x640", "720x960", "1080x1440", "1440x1920"],
     "2.35:1": ["1280x544", "1920x816", "3840x1640"],
     "2:1": ["1280x640", "1920x960", "3840x1920"],
     "1.85:1": ["1280x690", "1920x1038", "3840x2076"],
-    "9:16": ["540x960", "720x1280", "1080x1920", "1440x2560"],
-    "3:4": ["480x640", "720x960", "1080x1440", "1440x1920"],
     "1:1": ["640x640", "1024x1024", "1080x1080", "1200x1200"]
 }
 
@@ -1078,20 +1078,18 @@ class App:
             self.log("取消编辑")
 
     def run_workflow(self):
-        mode = self.toolbar.mode_var.get()
-        if not messagebox.askyesno("确认", f"当前模式为【{mode}】，是否继续生成视频？"):
-            return
-        # 如果是图生视频模式，调用视频面板的专用方法
         if self.toolbar.mode_var.get() == "图生视频":
-            # 调用视频面板的图生视频方法
+            # 获取选中的镜头ID（如果有）
+            selected_ids = self.selected_shots_ids if self.selected_shots_ids is not None else None
             self.video_panel.run_i2v_workflow(
                 work_dir=self.work_dir,
                 shots_info=self.shots_info,
                 resolution=self.resolution_var.get(),
                 log_callback=self.log,
-                on_finish=self.workflow_done
+                on_finish=self.workflow_done,
+                selected_shots=selected_ids
             )
-            # 禁用相关按钮
+            # 禁用相关按钮（原有代码）
             self.standard_mode.run_workflow_btn.config(state='disabled', text="运行工作流")
             self.standard_mode.first_frame_btn.config(state='disabled')
             self.standard_mode.select_edit_btn.config(state='disabled')

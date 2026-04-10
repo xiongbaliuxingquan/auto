@@ -17,6 +17,7 @@ from typing import Optional, Dict, List, Tuple
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from utils import config_manager
 from utils.error_logger import log_error
+from utils.audio_utils import get_audio_duration
 
 # 工作流模板路径
 WORKFLOW_TEMPLATE = os.path.join(
@@ -139,7 +140,8 @@ def generate_single_video(
     height: int = DEFAULT_HEIGHT,
     api_url: Optional[str] = None,
     log_callback=None,
-    auto_trim: bool = True
+    auto_trim: bool = True,
+    target_duration: Optional[int] = None   # 新增：裁剪目标时长，若不指定则等于duration
 ) -> Optional[str]:
     """
     生成单个镜头的图生视频
@@ -236,27 +238,32 @@ def generate_single_video(
     # 下载视频
     if log_callback:
         log_callback("下载视频文件...")
-    if download_video(api_url, node_out, temp_video_path):
-        # 裁剪到目标时长
-        if auto_trim:
+        if download_video(api_url, node_out, temp_video_path):
+            from utils.audio_utils import get_audio_duration   # 确保已导入
+            actual_duration = get_audio_duration(temp_video_path)
             if log_callback:
-                log_callback(f"裁剪视频至 {duration} 秒...")
-            if trim_video(temp_video_path, final_video_path, duration):
-                os.remove(temp_video_path)
+                log_callback(f"下载完成，实际视频时长: {actual_duration:.2f} 秒")
+
+            if auto_trim:
+                trim_target = target_duration if target_duration is not None else duration
                 if log_callback:
-                    log_callback(f"镜头 {shot_id} 视频已保存: {final_video_path}")
-                return final_video_path
+                    log_callback(f"裁剪视频至目标时长 {trim_target} 秒...")
+                if trim_video(temp_video_path, final_video_path, trim_target):
+                    trimmed_duration = get_audio_duration(final_video_path)
+                    os.remove(temp_video_path)
+                    if log_callback:
+                        log_callback(f"裁剪完成，最终视频时长: {trimmed_duration:.2f} 秒，已保存: {final_video_path}")
+                    return final_video_path
+                else:
+                    os.rename(temp_video_path, final_video_path)
+                    if log_callback:
+                        log_callback(f"裁剪失败，保留原始视频: {final_video_path} (时长 {actual_duration:.2f} 秒)")
+                    return final_video_path
             else:
-                # 裁剪失败，保留原文件
                 os.rename(temp_video_path, final_video_path)
                 if log_callback:
-                    log_callback(f"裁剪失败，保留原始视频: {final_video_path}")
+                    log_callback(f"镜头 {shot_id} 视频已保存（未裁剪）: {final_video_path} (时长 {actual_duration:.2f} 秒)")
                 return final_video_path
-        else:
-            os.rename(temp_video_path, final_video_path)
-            if log_callback:
-                log_callback(f"镜头 {shot_id} 视频已保存（未裁剪）: {final_video_path}")
-            return final_video_path
     else:
         raise Exception("下载视频失败")
 

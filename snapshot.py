@@ -3,7 +3,7 @@ import fnmatch
 
 # 配置
 output_file = "project_snapshot.txt"
-exclude_dirs = {'.git', '__pycache__', 'venv', 'venv311', 'env', 'node_modules', 'output', 'logs'}  # 添加了要排除的文件夹
+exclude_dirs = {'.git', '__pycache__', 'venv', 'venv311', 'env', 'node_modules', 'output', 'logs', 'tools', '.git', '.vscode'}  # 添加了要排除的文件夹
 include_extensions = ['*.py', '*.json', '*.md', '*.txt', '*.yaml', '*.ini', '*.cfg']  # 需要包含的文件类型
 
 def should_include(filepath):

@@ -1,5 +1,5 @@
 # Project Snapshot
-Generated: 2026-04-08 11:35:46.685365
+Generated: 2026-04-10 09:08:10.081660
 
 ## Project Structure
 - audio整体改造清单.txt
@@ -7,12 +7,9 @@ Generated: 2026-04-08 11:35:46.685365
 - LTX2.3精准提示词.txt
 - project_snapshot.txt
 - snapshot.py
-- test_wizard.py
 - workflow_config.json
 - 应用框架.json
 - 📦项目结构树.txt
-- .vscode\settings.json
-- .vscode\tasks.json
 - core\align_videos.py
 - core\audio_labeler.py
 - core\auto_split_deepseek.py
@@ -37,12 +34,14 @@ Generated: 2026-04-08 11:35:46.685365
 - core\audio\subtitle.py
 - core\i2v\cfy_i2v.py
 - core\i2v\generate_asset_image.py
+- core\i2v\generate_documentary_frame.py
 - core\i2v\generate_first_frame_image.py
 - core\i2v\generate_first_frame_prompt.py
 - examples\__init__.py
 - gui\audio_panel.py
 - gui\common_widgets.py
 - gui\countdown_timer.py
+- gui\image_panel.py
 - gui\log_viewer.py
 - gui\preset_manager.py
 - gui\settings_dialog.py
@@ -52,7 +51,6 @@ Generated: 2026-04-08 11:35:46.685365
 - gui\standard_video_panel.py
 - gui\step_manager.py
 - gui\story_wizard.py
-- gui\story_wizard旧面板备份.py
 - gui\top_toolbar.py
 - gui\tts_tutorial.py
 - gui\ui_components.py
@@ -91,7 +89,6 @@ Generated: 2026-04-08 11:35:46.685365
 - prompt_presets\mime2.txt
 - prompt_presets\mime_default.txt
 - prompt_presets\hardcore\历史时政深度稿.txt
-- tools\ffmpeg\LICENSE.txt
 - utils\ai_utils.py
 - utils\align_video_duration.py
 - utils\aliyun_file_trans.py
@@ -271,15 +268,16 @@ from gui.common_widgets import CommonWidgets
 from gui.top_toolbar import TopToolbar
 from gui.audio_panel import AudioPanel
 from tkinter import scrolledtext
+from gui.image_panel import ImagePanel
 
 ASPECT_RATIO_MAP = {
-    "16:9": ["640x360", "854x480", "1280x720", "1920x1080", "2560x1440"],
+    "16:9": ["1280x720", "1920x1080", "2560x1440", "640x360", "854x480", ],
+    "9:16": ["720x1280", "1080x1920", "1440x2560", "360x640", "480x854"],
     "4:3": ["640x480", "800x600", "1024x768", "1280x960", "1440x1080", "1600x1200", "2048x1536"],
+    "3:4": ["480x640", "720x960", "1080x1440", "1440x1920"],
     "2.35:1": ["1280x544", "1920x816", "3840x1640"],
     "2:1": ["1280x640", "1920x960", "3840x1920"],
     "1.85:1": ["1280x690", "1920x1038", "3840x2076"],
-    "9:16": ["540x960", "720x1280", "1080x1920", "1440x2560"],
-    "3:4": ["480x640", "720x960", "1080x1440", "1440x1920"],
     "1:1": ["640x640", "1024x1024", "1080x1080", "1200x1200"]
 }
 
@@ -358,6 +356,13 @@ class App:
         self.audio_frame = ttk.Frame(self.content_frame)
         self.video_frame = ttk.Frame(self.content_frame)
         self.edit_frame = ttk.Frame(self.content_frame)
+        self.image_frame = ttk.Frame(self.content_frame)   # 新增
+        
+        # 创建图像面板
+        from gui.image_panel import ImagePanel
+        self.image_panel = ImagePanel(self.image_frame, self)
+        self.image_panel.pack(fill='both', expand=True)
+        self.image_frame.pack_forget()
 
         # 故事模块：包含标准模式和一键成片面板
         self.standard_mode = StandardMode(self.story_frame, self, ASPECT_RATIO_MAP)
@@ -431,6 +436,16 @@ class App:
             self.root.after_cancel(self._resize_timer)
         self._delayed_refresh()
 
+    def show_image(self):
+        self.hide_all_modules()
+        self.image_frame.pack(fill='both', expand=True)
+        self.current_module = "图像"
+        if self.work_dir:
+            self.image_panel.set_work_dir(self.work_dir)
+        else:
+            self.image_panel.set_work_dir(None)
+        self.image_panel.refresh()
+
     def _delayed_refresh(self):
         self.root.update_idletasks()
         # 如果有 canvas 需要刷新滚动区域，可以调用
@@ -458,6 +473,7 @@ class App:
     def create_sidebar(self):
         ttk.Button(self.sidebar, text="📖 故事", command=self.show_story).pack(fill='x', padx=10, pady=5)
         ttk.Button(self.sidebar, text="🎵 音频", command=self.show_audio).pack(fill='x', padx=10, pady=5)
+        ttk.Button(self.sidebar, text="🖼️ 图像", command=self.show_image).pack(fill='x', padx=10, pady=5)
         ttk.Button(self.sidebar, text="🎬 视频", command=self.show_video).pack(fill='x', padx=10, pady=5)
         ttk.Button(self.sidebar, text="✂️ 剪辑", command=self.show_edit).pack(fill='x', padx=10, pady=5)
 
@@ -501,6 +517,7 @@ class App:
         self.audio_frame.pack_forget()
         self.video_frame.pack_forget()
         self.edit_frame.pack_forget()
+        self.image_frame.pack_forget()
 
     def sync_script_to_audio(self):
         """将当前口播稿文本同步到音频面板"""
@@ -523,8 +540,7 @@ class App:
         btn_frame.pack(fill='x', padx=5, pady=5)
 
         ttk.Button(btn_frame, text="运行工作流", command=self.run_workflow, width=12).pack(side='left', padx=2)
-        ttk.Button(btn_frame, text="生成首帧提示词", command=self.run_first_frame_generation, width=14).pack(side='left', padx=2)
-        ttk.Button(btn_frame, text="选择或编辑提示词", command=self.open_shot_editor, width=16).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="选择或编辑视频提示词", command=self.open_shot_editor, width=16).pack(side='left', padx=2)
         ttk.Button(btn_frame, text="视频精确裁剪", command=self.run_video_align, width=12).pack(side='left', padx=2)
 
         self.continue_btn = ttk.Button(btn_frame, text="继续", command=self.continue_generation, state='disabled', width=8)
@@ -1228,6 +1244,8 @@ class App:
         self.status_label.config(text="倒计时：20秒后自动运行工作流")
         self.standard_mode.run_workflow_btn.config(state='normal', text="运行工作流 (20s)")
         self.standard_mode.first_frame_btn.config(state='normal')
+        
+        # 强制重新加载镜头信息（从易读版文件）
         temp_manager = comfyui_manager.ComfyUIManager("", "")
         readable_file = temp_manager.get_latest_readable_file(self.work_dir)
         if readable_file:
@@ -1235,15 +1253,36 @@ class App:
             if self.shots_info:
                 self.standard_mode.select_edit_btn.config(state='normal')
                 self.log(f"找到 {len(self.shots_info)} 个镜头，可点击「选择或编辑提示词」进行调整")
+        
         if self.toolbar.mode_type_var.get() == "一键成片":
             self.simple_mode.show_countdown(20)
             if hasattr(self.simple_mode, 'edit_btn'):
                 self.simple_mode.edit_btn.config(state='normal')
             if hasattr(self.simple_mode, 'run_workflow_btn'):
                 self.simple_mode.run_workflow_btn.config(state='normal')
+        
         self.timer.start(20000)
+        
+        # 刷新视频面板（延迟执行，确保文件已完全写入）
+        if hasattr(self, 'video_panel'):
+            self.video_panel.set_work_dir(self.work_dir)
+            self.root.after(500, self.video_panel.refresh)
 
     def open_shot_editor(self):
+        # 强制重新从易读版文件加载镜头信息，确保提示词是最新的
+        if self.work_dir:
+            temp_manager = comfyui_manager.ComfyUIManager("", "")
+            readable_file = temp_manager.get_latest_readable_file(self.work_dir)
+            if readable_file:
+                new_shots_info = temp_manager.get_shots_info(readable_file)
+                if new_shots_info:
+                    self.shots_info = new_shots_info
+                    self.log(f"已从易读版文件重新加载镜头信息，共 {len(self.shots_info)} 个镜头")
+                else:
+                    self.log("警告：从易读版文件加载镜头信息失败")
+            else:
+                self.log("警告：未找到易读版分镜文件")
+
         if not self.shots_info:
             messagebox.showerror("错误", "没有镜头信息，请先完成前三步或打开历史项目")
             return
@@ -1286,6 +1325,26 @@ class App:
             self.log("取消编辑")
 
     def run_workflow(self):
+        if self.toolbar.mode_var.get() == "图生视频":
+            # 获取选中的镜头ID（如果有）
+            selected_ids = self.selected_shots_ids if self.selected_shots_ids is not None else None
+            self.video_panel.run_i2v_workflow(
+                work_dir=self.work_dir,
+                shots_info=self.shots_info,
+                resolution=self.resolution_var.get(),
+                log_callback=self.log,
+                on_finish=self.workflow_done,
+                selected_shots=selected_ids
+            )
+            # 禁用相关按钮（原有代码）
+            self.standard_mode.run_workflow_btn.config(state='disabled', text="运行工作流")
+            self.standard_mode.first_frame_btn.config(state='disabled')
+            self.standard_mode.select_edit_btn.config(state='disabled')
+            self.status_label.config(text="正在生成视频...")
+            self.log("\n========== 图生视频 ==========")
+            return
+
+        # 以下是原有的文生视频逻辑（保持不变）
         if not self.shots_info:
             messagebox.showwarning("提示", "请先点击生成口播稿点击后口播稿预览窗出现内容后,再点击下方确认并生成视频,待倒计时时点击我才能进入流程。")
             return
@@ -1313,7 +1372,6 @@ class App:
             self.log("继续模式：将生成剩余镜头")
         elif self.selected_shots_ids is not None:
             selected_ids = self.selected_shots_ids
-            # 如果是重试，重置 selected_shots_ids 避免后续影响（但会在 workflow_done 中重置）
         else:
             selected_ids = None
 
@@ -1321,35 +1379,31 @@ class App:
         self.log("\n========== 4/4: 生成视频 ==========")
 
         api_url = config_manager.COMFYUI_API_URL
-        # 创建带时间戳的视频文件夹
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         video_folder_name = "视频"
         output_dir = os.path.join(self.work_dir, video_folder_name)
         os.makedirs(output_dir, exist_ok=True)
 
-        # 定义镜头生成完成回调
         def on_shot_done(shot_id):
-            # 调用所有注册的回调
             for cb in self.video_generation_callbacks:
                 try:
                     cb(shot_id)
                 except Exception as e:
                     self.log(f"视频生成回调执行失败: {e}")
 
-        # 判断是否为一键成片模式
         is_simple_mode = (self.toolbar.mode_type_var.get() == "一键成片")
         manager = comfyui_manager.ComfyUIManager(
             api_url=api_url,
             output_base_dir=output_dir,
             on_shot_generated=on_shot_done,
-            auto_trim=is_simple_mode   # 仅一键成片模式启用裁剪
+            auto_trim=is_simple_mode
         )
         manager.set_log_callback(self.log)
 
         def thread_func():
             try:
                 success, msg = manager.run(self.story_title, self.work_dir, resolution, template_path,
-                                           selected_shots=selected_ids)
+                                        selected_shots=selected_ids)
                 if success:
                     self.root.after(0, self.workflow_done)
                 else:
@@ -1591,7 +1645,7 @@ if __name__ == "__main__":
 ### project_snapshot.txt
 ```
 # Project Snapshot
-Generated: 2026-04-08 11:35:46.685365
+Generated: 2026-04-10 09:08:10.081660
 
 ## Project Structure
 - audio整体改造清单.txt
@@ -1599,12 +1653,9 @@ Generated: 2026-04-08 11:35:46.685365
 - LTX2.3精准提示词.txt
 - project_snapshot.txt
 - snapshot.py
-- test_wizard.py
 - workflow_config.json
 - 应用框架.json
 - 📦项目结构树.txt
-- .vscode\settings.json
-- .vscode\tasks.json
 - core\align_videos.py
 - core\audio_labeler.py
 - core\auto_split_deepseek.py
@@ -1629,12 +1680,14 @@ Generated: 2026-04-08 11:35:46.685365
 - core\audio\subtitle.py
 - core\i2v\cfy_i2v.py
 - core\i2v\generate_asset_image.py
+- core\i2v\generate_documentary_frame.py
 - core\i2v\generate_first_frame_image.py
 - core\i2v\generate_first_frame_prompt.py
 - examples\__init__.py
 - gui\audio_panel.py
 - gui\common_widgets.py
 - gui\countdown_timer.py
+- gui\image_panel.py
 - gui\log_viewer.py
 - gui\preset_manager.py
 - gui\settings_dialog.py
@@ -1644,7 +1697,6 @@ Generated: 2026-04-08 11:35:46.685365
 - gui\standard_video_panel.py
 - gui\step_manager.py
 - gui\story_wizard.py
-- gui\story_wizard旧面板备份.py
 - gui\top_toolbar.py
 - gui\tts_tutorial.py
 - gui\ui_components.py
@@ -1683,7 +1735,6 @@ Generated: 2026-04-08 11:35:46.685365
 - prompt_presets\mime2.txt
 - prompt_presets\mime_default.txt
 - prompt_presets\hardcore\历史时政深度稿.txt
-- tools\ffmpeg\LICENSE.txt
 - utils\ai_utils.py
 - utils\align_video_duration.py
 - utils\aliyun_file_trans.py
@@ -1863,15 +1914,16 @@ from gui.common_widgets import CommonWidgets
 from gui.top_toolbar import TopToolbar
 from gui.audio_panel import AudioPanel
 from tkinter import scrolledtext
+from gui.image_panel import ImagePanel
 
 ASPECT_RATIO_MAP = {
-    "16:9": ["640x360", "854x480", "1280x720", "1920x1080", "2560x1440"],
+    "16:9": ["1280x720", "1920x1080", "2560x1440", "640x360", "854x480", ],
+    "9:16": ["720x1280", "1080x1920", "1440x2560", "360x640", "480x854"],
     "4:3": ["640x480", "800x600", "1024x768", "1280x960", "1440x1080", "1600x1200", "2048x1536"],
+    "3:4": ["480x640", "720x960", "1080x1440", "1440x1920"],
     "2.35:1": ["1280x544", "1920x816", "3840x1640"],
     "2:1": ["1280x640", "1920x960", "3840x1920"],
     "1.85:1": ["1280x690", "1920x1038", "3840x2076"],
-    "9:16": ["540x960", "720x1280", "1080x1920", "1440x2560"],
-    "3:4": ["480x640", "720x960", "1080x1440", "1440x1920"],
     "1:1": ["640x640", "1024x1024", "1080x1080", "1200x1200"]
 }
 
@@ -1950,6 +2002,13 @@ class App:
         self.audio_frame = ttk.Frame(self.content_frame)
         self.video_frame = ttk.Frame(self.content_frame)
         self.edit_frame = ttk.Frame(self.content_frame)
+        self.image_frame = ttk.Frame(self.content_frame)   # 新增
+        
+        # 创建图像面板
+        from gui.image_panel import ImagePanel
+        self.image_panel = ImagePanel(self.image_frame, self)
+        self.image_panel.pack(fill='both', expand=True)
+        self.image_frame.pack_forget()
 
         # 故事模块：包含标准模式和一键成片面板
         self.standard_mode = StandardMode(self.story_frame, self, ASPECT_RATIO_MAP)
@@ -2023,6 +2082,16 @@ class App:
             self.root.after_cancel(self._resize_timer)
         self._delayed_refresh()
 
+    def show_image(self):
+        self.hide_all_modules()
+        self.image_frame.pack(fill='both', expand=True)
+        self.current_module = "图像"
+        if self.work_dir:
+            self.image_panel.set_work_dir(self.work_dir)
+        else:
+            self.image_panel.set_work_dir(None)
+        self.image_panel.refresh()
+
     def _delayed_refresh(self):
         self.root.update_idletasks()
         # 如果有 canvas 需要刷新滚动区域，可以调用
@@ -2050,6 +2119,7 @@ class App:
     def create_sidebar(self):
         ttk.Button(self.sidebar, text="📖 故事", command=self.show_story).pack(fill='x', padx=10, pady=5)
         ttk.Button(self.sidebar, text="🎵 音频", command=self.show_audio).pack(fill='x', padx=10, pady=5)
+        ttk.Button(self.sidebar, text="🖼️ 图像", command=self.show_image).pack(fill='x', padx=10, pady=5)
         ttk.Button(self.sidebar, text="🎬 视频", command=self.show_video).pack(fill='x', padx=10, pady=5)
         ttk.Button(self.sidebar, text="✂️ 剪辑", command=self.show_edit).pack(fill='x', padx=10, pady=5)
 
@@ -2093,6 +2163,7 @@ class App:
         self.audio_frame.pack_forget()
         self.video_frame.pack_forget()
         self.edit_frame.pack_forget()
+        self.image_frame.pack_forget()
 
     def sync_script_to_audio(self):
         """将当前口播稿文本同步到音频面板"""
@@ -2115,8 +2186,7 @@ class App:
         btn_frame.pack(fill='x', padx=5, pady=5)
 
         ttk.Button(btn_frame, text="运行工作流", command=self.run_workflow, width=12).pack(side='left', padx=2)
-        ttk.Button(btn_frame, text="生成首帧提示词", command=self.run_first_frame_generation, width=14).pack(side='left', padx=2)
-        ttk.Button(btn_frame, text="选择或编辑提示词", command=self.open_shot_editor, width=16).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="选择或编辑视频提示词", command=self.open_shot_editor, width=16).pack(side='left', padx=2)
         ttk.Button(btn_frame, text="视频精确裁剪", command=self.run_video_align, width=12).pack(side='left', padx=2)
 
         self.continue_btn = ttk.Button(btn_frame, text="继续", command=self.continue_generation, state='disabled', width=8)
@@ -2820,6 +2890,8 @@ class App:
         self.status_label.config(text="倒计时：20秒后自动运行工作流")
         self.standard_mode.run_workflow_btn.config(state='normal', text="运行工作流 (20s)")
         self.standard_mode.first_frame_btn.config(state='normal')
+        
+        # 强制重新加载镜头信息（从易读版文件）
         temp_manager = comfyui_manager.ComfyUIManager("", "")
         readable_file = temp_manager.get_latest_readable_file(self.work_dir)
         if readable_file:
@@ -2827,15 +2899,36 @@ class App:
             if self.shots_info:
                 self.standard_mode.select_edit_btn.config(state='normal')
                 self.log(f"找到 {len(self.shots_info)} 个镜头，可点击「选择或编辑提示词」进行调整")
+        
         if self.toolbar.mode_type_var.get() == "一键成片":
             self.simple_mode.show_countdown(20)
             if hasattr(self.simple_mode, 'edit_btn'):
                 self.simple_mode.edit_btn.config(state='normal')
             if hasattr(self.simple_mode, 'run_workflow_btn'):
                 self.simple_mode.run_workflow_btn.config(state='normal')
+        
         self.timer.start(20000)
+        
+        # 刷新视频面板（延迟执行，确保文件已完全写入）
+        if hasattr(self, 'video_panel'):
+            self.video_panel.set_work_dir(self.work_dir)
+            self.root.after(500, self.video_panel.refresh)
 
     def open_shot_editor(self):
+        # 强制重新从易读版文件加载镜头信息，确保提示词是最新的
+        if self.work_dir:
+            temp_manager = comfyui_manager.ComfyUIManager("", "")
+            readable_file = temp_manager.get_latest_readable_file(self.work_dir)
+            if readable_file:
+                new_shots_info = temp_manager.get_shots_info(readable_file)
+                if new_shots_info:
+                    self.shots_info = new_shots_info
+                    self.log(f"已从易读版文件重新加载镜头信息，共 {len(self.shots_info)} 个镜头")
+                else:
+                    self.log("警告：从易读版文件加载镜头信息失败")
+            else:
+                self.log("警告：未找到易读版分镜文件")
+
         if not self.shots_info:
             messagebox.showerror("错误", "没有镜头信息，请先完成前三步或打开历史项目")
             return
@@ -2878,6 +2971,26 @@ class App:
             self.log("取消编辑")
 
     def run_workflow(self):
+        if self.toolbar.mode_var.get() == "图生视频":
+            # 获取选中的镜头ID（如果有）
+            selected_ids = self.selected_shots_ids if self.selected_shots_ids is not None else None
+            self.video_panel.run_i2v_workflow(
+                work_dir=self.work_dir,
+                shots_info=self.shots_info,
+                resolution=self.resolution_var.get(),
+                log_callback=self.log,
+                on_finish=self.workflow_done,
+                selected_shots=selected_ids
+            )
+            # 禁用相关按钮（原有代码）
+            self.standard_mode.run_workflow_btn.config(state='disabled', text="运行工作流")
+            self.standard_mode.first_frame_btn.config(state='disabled')
+            self.standard_mode.select_edit_btn.config(state='disabled')
+            self.status_label.config(text="正在生成视频...")
+            self.log("\n========== 图生视频 ==========")
+            return
+
+        # 以下是原有的文生视频逻辑（保持不变）
         if not self.shots_info:
             messagebox.showwarning("提示", "请先点击生成口播稿点击后口播稿预览窗出现内容后,再点击下方确认并生成视频,待倒计时时点击我才能进入流程。")
             return
@@ -2905,7 +3018,6 @@ class App:
             self.log("继续模式：将生成剩余镜头")
         elif self.selected_shots_ids is not None:
             selected_ids = self.selected_shots_ids
-            # 如果是重试，重置 selected_shots_ids 避免后续影响（但会在 workflow_done 中重置）
         else:
             selected_ids = None
 
@@ -2913,35 +3025,31 @@ class App:
         self.log("\n========== 4/4: 生成视频 ==========")
 
         api_url = config_manager.COMFYUI_API_URL
-        # 创建带时间戳的视频文件夹
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         video_folder_name = "视频"
         output_dir = os.path.join(self.work_dir, video_folder_name)
         os.makedirs(output_dir, exist_ok=True)
 
-        # 定义镜头生成完成回调
         def on_shot_done(shot_id):
-            # 调用所有注册的回调
             for cb in self.video_generation_callbacks:
                 try:
                     cb(shot_id)
                 except Exception as e:
                     self.log(f"视频生成回调执行失败: {e}")
 
-        # 判断是否为一键成片模式
         is_simple_mode = (self.toolbar.mode_type_var.get() == "一键成片")
         manager = comfyui_manager.ComfyUIManager(
             api_url=api_url,
             output_base_dir=output_dir,
             on_shot_generated=on_shot_done,
-            auto_trim=is_simple_mode   # 仅一键成片模式启用裁剪
+            auto_trim=is_simple_mode
         )
         manager.set_log_callback(self.log)
 
         def thread_func():
             try:
                 success, msg = manager.run(self.story_title, self.work_dir, resolution, template_path,
-                                           selected_shots=selected_ids)
+                                        selected_shots=selected_ids)
                 if success:
                     self.root.after(0, self.workflow_done)
                 else:
@@ -3089,7 +3197,7 @@ import fnmatch
 
 # 配置
 output_file = "project_snapshot.txt"
-exclude_dirs = {'.git', '__pycache__', 'venv', 'venv311', 'env', 'node_modules', 'output', 'logs'}  # 添加了要排除的文件夹
+exclude_dirs = {'.git', '__pycache__', 'venv', 'venv311', 'env', 'node_modules', 'output', 'logs', 'tools', '.git', '.vscode'}  # 添加了要排除的文件夹
 include_extensions = ['*.py', '*.json', '*.md', '*.txt', '*.yaml', '*.ini', '*.cfg']  # 需要包含的文件类型
 
 def should_include(filepath):
@@ -3143,35 +3251,6 @@ if __name__ == "__main__":
     root = os.getcwd()  # 当前目录
     generate_snapshot(root, output_file)
     print(f"项目快照已生成：{output_file}")
-```
-
-### test_wizard.py
-```py
-import sys
-import tkinter as tk
-sys.path.insert(0, '.')
-
-try:
-    from gui.story_wizard import StoryWizardNew
-except Exception as e:
-    print("导入错误:", e)
-    sys.exit(1)
-
-def on_finish(script, metadata):
-    print("用户选择：", metadata)
-    print("故事内容：", script[:100])
-
-root = tk.Tk()
-root.title("测试根窗口")  # 不隐藏，观察根窗口是否出现
-# root.withdraw()   # 注释掉隐藏
-
-try:
-    wizard = StoryWizardNew(root, None, on_finish)
-    root.mainloop()
-except Exception as e:
-    print("运行错误:", e)
-    import traceback
-    traceback.print_exc()
 ```
 
 ### workflow_config.json
@@ -3389,28 +3468,6 @@ except Exception as e:
 └── 📁 .vscode/                      # VSCode配置
     ├── settings.json
     └── tasks.json                   # Git自动提交任务
-```
-
-### .vscode\settings.json
-```json
-{
-    "editor.find.autoFindInSelection": "always"
-}
-```
-
-### .vscode\tasks.json
-```json
-{
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "Git 全文件一键提交+推GitHub",
-      "type": "shell",
-      "command": "git add . && git commit -m \"自动备份 $(date '+%Y-%m-%d %H:%M:%S')\" && git push",
-      "problemMatcher": []
-    }
-  ]
-}
 ```
 
 ### core\align_videos.py
@@ -5976,6 +6033,7 @@ if __name__ == "__main__":
 ```py
 # generate_first_frame_prompts.py
 import os
+import io
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))  # 将项目根目录加入路径
 import re
@@ -6035,7 +6093,8 @@ def generate_first_frame_prompt(visual, duration, emotion):
 1. 必须严格基于【视觉核心参考】中的描述，可以适当细化，但不得改变核心意象、风格和情绪。
 2. 聚焦于静态画面，突出构图、光影、细节、情绪。
 3. 不要包含任何关于镜头运动、时间推移的词语。
-4. 输出的提示词应为纯净文本，无任何额外标记。
+4. 理解整个视频，生成的图片是视频的第一帧，后续发展通过此帧开始。
+5. 输出的提示词应为纯净文本，无任何额外标记。请在提示词末尾加上“超高清，超高细节”。
 
 请输出首帧提示词：
 """
@@ -6065,13 +6124,13 @@ def generate_first_frame_prompt(visual, duration, emotion):
         return f"[生成失败] 异常: {str(e)}"
 
 def worker(item, idx):
-    """
-    并发工作函数：处理一个镜头，返回 (para_id, shot_idx, original_content, video_prompt, chinese, english)
-    """
     para_id, shot_idx, original_content, visual, duration, emotion = item
+    print(f"正在生成镜头 {para_id}-{shot_idx} 的首帧提示词...")
+    sys.stdout.flush()
     video_prompt = ""
     chinese = generate_first_frame_prompt(visual, duration, emotion)
     english = translation_utils.translate_text(chinese)
+    print(f"镜头 {para_id}-{shot_idx} 生成完成")
     return (para_id, shot_idx, original_content, video_prompt, chinese, english)
 
 def main():
@@ -6147,6 +6206,17 @@ def main():
         for row in csv_rows:
             f.write(row["英文首帧提示词"] + ';\n')
     print(f"纯文本列表已生成: {txt_file}")
+
+    # 在 main 函数中，生成 csv_rows 之后，添加：
+    json_output = []
+    for row in csv_rows:
+        json_output.append({
+            "shot_id": row["序号"],
+            "prompt": row["中文首帧提示词"]   # 或者使用英文？标准模式中首帧图提示词应该用中文，因为文生图使用中文提示词
+        })
+    json_path = os.path.join(work_dir, "first_frame_prompts.json")
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(json_output, f, ensure_ascii=False, indent=2)
 
 if __name__ == "__main__":
     main()
@@ -8013,8 +8083,24 @@ def generate_single_video(
     if log_callback:
         log_callback(f"设置随机种子: {seed}")
 
-    # 可选：设置分辨率节点54（TTResolutionSelector），工作流中已通过节点48缩放图像，但节点54可能影响输出尺寸
-    # 为了灵活性，我们也可以修改节点54的分辨率，但默认保持原样，由首帧图决定。
+    # 设置分辨率（节点54 TTResolutionSelector）
+    if width is not None and height is not None:
+        if "54" in workflow and workflow["54"]["class_type"] == "TTResolutionSelector":
+            custom_w = width // 2
+            custom_h = height // 2
+            workflow["54"]["inputs"]["use_custom_resolution"] = True
+            workflow["54"]["inputs"]["custom_width"] = custom_w
+            workflow["54"]["inputs"]["custom_height"] = custom_h
+            if log_callback:
+                log_callback(f"设置图生视频分辨率: {width}x{height} -> custom {custom_w}x{custom_h}")
+        else:
+            if log_callback:
+                log_callback("警告：工作流中未找到节点54（TTResolutionSelector），无法设置分辨率")
+    print(f"节点54设置: use_custom_resolution={workflow['54']['inputs'].get('use_custom_resolution')}, custom_width={workflow['54']['inputs'].get('custom_width')}, custom_height={workflow['54']['inputs'].get('custom_height')}")
+
+    # 提交工作流
+    if log_callback:
+        log_callback("提交图生视频工作流...")
 
     # 提交工作流
     if log_callback:
@@ -8122,32 +8208,36 @@ WORKFLOW_TEMPLATE = os.path.join(
 
 # 默认提示词模板（强制正面全身+目视镜头）
 DEFAULT_POSITIVE_TEMPLATE = (
-    "超高清，超高细节，{character_desc}，全身像，正面面对镜头，眼睛直视镜头，"
-    "站在{scene_desc}中，{style_desc}。"
+    "超高清，超高细节，{character_desc}，"
+    "环境：{scene_desc}，"
+    "{era_constraint}"
+    "全身像，正面面对镜头，眼睛直视镜头，"
+    "站在场景中，{style_desc}。"
     "禁止侧脸、背影、低头、闭眼，必须完整显示人物从头到脚。"
 )
-
 
 def sanitize_filename(name: str) -> str:
     name = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9_]', '_', name)
     name = re.sub(r'_+', '_', name)
     return name[:50]
 
-
+print("准备提交工作流...")
 def submit_workflow(api_url: str, workflow: dict) -> Optional[str]:
     url = f"{api_url.rstrip('/')}/prompt"
     payload = {"prompt": workflow}
     try:
         resp = requests.post(url, json=payload, timeout=30)
         if resp.status_code == 200:
-            return resp.json()['prompt_id']
+            result = resp.json()
+            print(f"[DEBUG] Workflow submitted successfully. Full API response: {result}") # <--- 添加这一行
+            return result.get('prompt_id')
         else:
             print(f"提交失败: {resp.status_code} {resp.text}")
             return None
     except Exception as e:
         print(f"提交异常: {e}")
         return None
-
+print(f"模板路径: {WORKFLOW_TEMPLATE}, 存在: {os.path.exists(WORKFLOW_TEMPLATE)}")
 
 def download_image(api_url: str, output_info: dict, save_path: str) -> bool:
     filename = output_info.get('filename')
@@ -8190,21 +8280,18 @@ def parse_global_assets(work_dir: str) -> Tuple[str, Dict[str, str]]:
     block_match = re.search(r'- 角色固定属性：\s*\n(.*?)(?=\n-|\Z)', content, re.DOTALL)
     if block_match:
         block = block_match.group(1)
-        # 匹配每个角色行，格式：【种族 角色名】 描述...
-        # 保留整行内容
         lines = block.strip().split('\n')
         for line in lines:
             line = line.strip()
             if not line:
                 continue
-            # 匹配方括号中的角色名
-            match = re.search(r'【[^】]*\s+([^】]+)】\s*(.*)', line)
+            # 匹配新格式：【角色名】 种族：...，...
+            match = re.match(r'【([^】]+)】\s+(.*)', line)
             if match:
                 role_name = match.group(1).strip()
-                full_desc = line  # 整行作为描述
+                full_desc = match.group(2).strip()
                 characters[role_name] = full_desc
     return style, characters
-
 
 def parse_paragraph1_assets(work_dir: str) -> str:
     """解析 assets_paragraph_1.txt，提取场景描述"""
@@ -8231,7 +8318,8 @@ def generate_asset_image(
     custom_prompt: Optional[str] = None,
     log_callback=None,
     width: Optional[int] = None,
-    height: Optional[int] = None
+    height: Optional[int] = None,
+    output_filename: Optional[str] = None   # 新增参数
 ) -> Optional[str]:
     """生成单个角色定妆照，支持自定义提示词"""
     if api_url is None:
@@ -8244,17 +8332,61 @@ def generate_asset_image(
         positive_prompt = DEFAULT_POSITIVE_TEMPLATE.format(
             character_desc=character_desc,
             scene_desc=scene_desc,
-            style_desc=style_desc
+            style_desc=style_desc,
+            era_constraint=""  # 临时占位，稍后会覆盖
+        )
+
+    # 读取世界观信息，生成时代约束（无论是否自定义提示词，都读取）
+    era_constraint = ""
+    metadata_path = os.path.join(work_dir, "metadata.json")
+    if os.path.exists(metadata_path):
+        try:
+            with open(metadata_path, 'r', encoding='utf-8') as f:
+                meta = json.load(f)
+            worldview = meta.get("世界观", {})
+            category = worldview.get("大类", "")
+            sub = worldview.get("子类", "")
+            
+            if category == "历史年代":
+                import re
+                match = re.search(r'[（(]([^）)]+)[）)]', sub)
+                dynasty = match.group(1) if match else "古代"
+                era_constraint = f"所有人物、建筑、服饰、道具必须符合{dynasty}时期特征，"
+            elif category == "现实当代":
+                era_constraint = "现代都市风格，当代服饰与场景，自然真实。"
+            elif category in ["近未来", "远未来"]:
+                era_constraint = "科幻未来风格，高科技感，允许未来服饰与建筑。"
+            elif category == "奇幻异世界":
+                era_constraint = "奇幻架空风格，无现代科技，魔法与冷兵器时代。"
+            elif category == "现代都市奇幻":
+                era_constraint = "现代都市背景，允许当代科技与魔法、超自然元素共存，保持都市现实感。"
+            else:
+                era_constraint = "请根据场景描述推断时代特征，避免出现明显不协调的现代元素。"
+        except Exception as e:
+            print(f"读取世界观失败: {e}")
+
+    # 如果不是自定义提示词，需要重新格式化以加入 era_constraint
+    if not custom_prompt:
+        positive_prompt = DEFAULT_POSITIVE_TEMPLATE.format(
+            character_desc=character_desc,
+            scene_desc=scene_desc,
+            style_desc=style_desc,
+            era_constraint=era_constraint
         )
     if log_callback:
         log_callback(f"[DEBUG] 正面提示词: {positive_prompt[:100]}...")
     else:
         print(f"[DEBUG] 正面提示词: {positive_prompt[:100]}...")
 
-    # 提前保存提示词文件（无论后续是否成功）
-    safe_name = sanitize_filename(character_name)
-    save_path = os.path.join(work_dir, "images", f"{safe_name}.png")
-    prompt_save_path = save_path.replace('.png', '_prompt.txt')
+    # 确定保存路径（根据是否提供 output_filename 决定）
+    if output_filename:
+        save_path = os.path.join(work_dir, "images", output_filename)
+        prompt_save_path = save_path.replace('.png', '_prompt.txt')
+    else:
+        safe_name = sanitize_filename(character_name)
+        save_path = os.path.join(work_dir, "images", f"{safe_name}.png")
+        prompt_save_path = save_path.replace('.png', '_prompt.txt')
+    
     os.makedirs(os.path.dirname(prompt_save_path), exist_ok=True)
     with open(prompt_save_path, 'w', encoding='utf-8') as pf:
         pf.write(positive_prompt)
@@ -8353,10 +8485,14 @@ def generate_asset_image(
                     history = data
                     break
         except Exception as e:
+            msg = f"查询异常: {e}"
             if log_callback:
-                log_callback(f"查询异常: {e}")
+                log_callback(msg)
             else:
-                print(f"查询异常: {e}")
+                print(msg)
+            import traceback
+            traceback.print_exc()
+            # 继续重试，不要 break
         time.sleep(3)
 
     if not history:
@@ -8411,16 +8547,20 @@ def generate_asset_image_with_prompt(
     scene_desc: str,
     style_desc: str,
     custom_prompt: str,
-    api_url: Optional[str] = None
+    api_url: Optional[str] = None,
+    width: Optional[int] = None,
+    height: Optional[int] = None
 ) -> Optional[str]:
     """生成资产图，使用自定义提示词（便捷函数）"""
-    return generate_asset_image(work_dir, character_name, character_desc, scene_desc, style_desc, api_url, custom_prompt)
+    return generate_asset_image(work_dir, character_name, character_desc, scene_desc, style_desc, api_url, custom_prompt, width=width, height=height)
 
 
 def generate_all_assets(work_dir: str, log_callback=None, width: Optional[int] = None, height: Optional[int] = None) -> List[str]:
     """批量生成所有角色的资产图（使用默认提示词）"""
     style, characters = parse_global_assets(work_dir)
+    print(f"DEBUG: characters = {characters}")
     if not characters:
+        print("DEBUG: characters is empty, exiting")
         if log_callback:
             log_callback("未从全局资产中提取到任何角色")
         return []
@@ -8448,6 +8588,110 @@ if __name__ == "__main__":
     generate_all_assets(args.work_dir, log_callback=print)
 ```
 
+### core\i2v\generate_documentary_frame.py
+```py
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+纪录片/文明结构专用：纯文生图，无角色定妆照
+"""
+
+import sys
+import os
+import json
+import time
+import random
+import requests
+from typing import List, Optional, Tuple
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+from utils import config_manager
+from .generate_asset_image import upload_image, submit_workflow, download_image, wait_for_history
+
+def generate_documentary_frames(
+    work_dir: str,
+    prompts: List[Tuple[str, str]],  # [(shot_id, prompt), ...]
+    width: int = 1920,
+    height: int = 1080,
+    log_callback=None
+) -> List[str]:
+    """
+    为纪录片生成首帧图（无角色，直接文生图）
+    返回保存的图片路径列表
+    """
+    api_url = config_manager.COMFYUI_API_URL
+    template_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        "workflow_templates",
+        "qwenimage文生图.json"
+    )
+    if not os.path.exists(template_path):
+        raise FileNotFoundError(f"模板不存在: {template_path}")
+
+    with open(template_path, 'r', encoding='utf-8') as f:
+        base_workflow = json.load(f)
+
+    # 设置全局分辨率
+    if "25" in base_workflow and base_workflow["25"]["class_type"] == "EmptyLatentImage":
+        base_workflow["25"]["inputs"]["width"] = width
+        base_workflow["25"]["inputs"]["height"] = height
+        if log_callback:
+            log_callback(f"设置分辨率: {width}x{height}")
+    else:
+        if log_callback:
+            log_callback("警告：工作流中未找到节点25")
+
+    saved_paths = []
+    images_dir = os.path.join(work_dir, "images")
+    os.makedirs(images_dir, exist_ok=True)
+
+    for idx, (shot_id, prompt) in enumerate(prompts):
+        if log_callback:
+            log_callback(f"正在生成镜头 {shot_id} 首帧图 ({idx+1}/{len(prompts)})...")
+        workflow = json.loads(json.dumps(base_workflow))
+        # 设置提示词
+        if "24" in workflow and workflow["24"]["class_type"] == "CLIPTextEncode":
+            workflow["24"]["inputs"]["text"] = prompt
+        else:
+            if log_callback:
+                log_callback("错误：工作流中未找到节点24")
+            continue
+        # 随机种子
+        if "21" in workflow and "inputs" in workflow["21"]:
+            workflow["21"]["inputs"]["seed"] = random.randint(0, 2**64 - 1)
+        # 提交
+        prompt_id = submit_workflow(api_url, workflow)
+        if not prompt_id:
+            if log_callback:
+                log_callback(f"提交工作流失败: {shot_id}")
+            continue
+        # 等待
+        history = wait_for_history(api_url, prompt_id, log_callback=log_callback)
+        if not history:
+            if log_callback:
+                log_callback(f"等待超时: {shot_id}")
+            continue
+        outputs = history[prompt_id].get('outputs', {})
+        if "19" not in outputs:
+            if log_callback:
+                log_callback(f"未找到节点19的输出: {shot_id}")
+            continue
+        images_output = outputs["19"].get('images', [])
+        if not images_output:
+            if log_callback:
+                log_callback(f"没有生成图片: {shot_id}")
+            continue
+        img_info = images_output[0]
+        save_path = os.path.join(images_dir, f"{shot_id}.png")
+        if download_image(api_url, img_info, save_path):
+            saved_paths.append(save_path)
+            if log_callback:
+                log_callback(f"已保存镜头 {shot_id} 首帧图: {save_path}")
+        else:
+            if log_callback:
+                log_callback(f"下载失败: {shot_id}")
+    return saved_paths
+```
+
 ### core\i2v\generate_first_frame_image.py
 ```py
 #!/usr/bin/env python
@@ -8469,6 +8713,13 @@ from typing import List, Dict, Optional
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from utils import config_manager
 from utils.error_logger import log_error
+
+# 工作流模板路径（分镜图片制作，按角色数量区分）
+TEMPLATE_BY_CHAR_COUNT = {
+    1: os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "workflow_templates", "分镜图片制作_1图.json"),
+    2: os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "workflow_templates", "分镜图片制作_2图.json"),
+    3: os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "workflow_templates", "分镜图片制作_3图.json"),
+}
 
 def extract_characters_from_prompt(prompt: str, all_characters: List[str]) -> List[str]:
     """
@@ -8649,24 +8900,28 @@ def generate_batch(
     生成一批首帧图（最多12个）
     characters: 该批次中所有镜头涉及的角色列表（去重后的），顺序为 [主角, 配角1, 配角2]
     """
-    # 处理单角色模式
+    # 处理单角色模式（兼容旧调用）
     if not characters:
-        # 如果没有提供角色列表，则使用默认主角（从工作目录的资产文件中解析）
-        from core.i2v.generate_asset_image import parse_global_assets
-        _, chars_dict = parse_global_assets(work_dir)
-        if chars_dict:
-            characters = [list(chars_dict.keys())[0]]
+        if asset_image_path:
+            base = os.path.basename(asset_image_path)
+            char_name = os.path.splitext(base)[0]
+            characters = [char_name]
         else:
-            raise ValueError("未找到任何角色信息，无法生成首帧图")
+            # 尝试从工作目录解析角色列表
+            from core.i2v.generate_asset_image import parse_global_assets
+            _, chars_dict = parse_global_assets(work_dir)
+            if chars_dict:
+                characters = [list(chars_dict.keys())[0]]
+            else:
+                raise ValueError("未提供任何角色图片，无法生成首帧图")
     
     if api_url is None:
         api_url = config_manager.COMFYUI_API_URL
 
     # 打印批次信息
     print(f"\n[批量] 角色组合 {characters}, 共 {len(prompts)} 个镜头: {[sid for sid,_ in prompts]}")
-
-    if not os.path.exists(WORKFLOW_TEMPLATE):
-        raise FileNotFoundError(f"工作流模板不存在: {WORKFLOW_TEMPLATE}")
+    if log_callback:
+        log_callback(f"角色组合 {characters}，镜头数 {len(prompts)}")
 
     # 准备角色图片路径
     images_dir = os.path.join(work_dir, "images")
@@ -8688,61 +8943,41 @@ def generate_batch(
         if log_callback:
             log_callback(f"已上传角色 {char} 定妆照: {uploaded_name}")
 
+    # 根据角色数量选择模板
+    char_count = len(characters)
+    if char_count not in TEMPLATE_BY_CHAR_COUNT:
+        raise ValueError(f"不支持的角色数量: {char_count}，仅支持1-3个角色")
+    workflow_template = TEMPLATE_BY_CHAR_COUNT[char_count]
+    print(f"[模板] 使用模板: {os.path.basename(workflow_template)}")
+    if log_callback:
+        log_callback(f"使用模板: {os.path.basename(workflow_template)}")
+
     # 加载工作流模板
-    with open(WORKFLOW_TEMPLATE, 'r', encoding='utf-8') as f:
+    with open(workflow_template, 'r', encoding='utf-8') as f:
         workflow = json.load(f)
 
-    # 设置节点21（主角，始终启用）
-    if characters:
-        main_char = characters[0]
-        workflow["21"]["inputs"]["image"] = uploaded_names[main_char]
-        print(f"[工作流] 设置节点21图片: {main_char}")
-        if log_callback:
-            log_callback(f"设置节点21为主角: {main_char}")
-    else:
-        # 降级逻辑（基本不会执行）
-        uploaded_name = upload_image(api_url, asset_image_path)
-        workflow["21"]["inputs"]["image"] = uploaded_name
+    # 设置节点21（主角图片）
+    main_char = characters[0]
+    workflow["21"]["inputs"]["image"] = uploaded_names[main_char]
+    print(f"[工作流] 设置节点21图片: {main_char}")
+    if log_callback:
+        log_callback(f"设置节点21为主角: {main_char}")
 
-    # 先绕过图2组和图3组的所有节点
-    for node_id in ["41", "42", "43"]:
-        if node_id in workflow:
-            workflow[node_id]["mode"] = 2
-            print(f"[绕过] 节点 {node_id} mode 已设为 {workflow[node_id]['mode']}")
-    for node_id in ["47", "46", "48"]:
-        if node_id in workflow:
-            workflow[node_id]["mode"] = 2
-            print(f"[绕过] 节点 {node_id} mode 已设为 {workflow[node_id]['mode']}")
-
-    # 如果有第二个角色（配角1），则启用图2组
-    if len(characters) >= 2:
+    # 如果有第二个角色，设置节点41
+    if char_count >= 2:
         char2 = characters[1]
-        for node_id in ["41", "42", "43"]:
-            if node_id in workflow:
-                workflow[node_id].pop("mode", None)
-        if "41" in workflow:
-            workflow["41"]["inputs"]["image"] = uploaded_names[char2]
-            print(f"[工作流] 启用图2组，节点41图片: {char2}")
-            if log_callback:
-                log_callback(f"启用图2组，设置节点41为配角: {char2}")
-        else:
-            if log_callback:
-                log_callback("警告：工作流中未找到节点41")
+        workflow["41"]["inputs"]["image"] = uploaded_names[char2]
+        print(f"[工作流] 设置节点41图片: {char2}")
+        if log_callback:
+            log_callback(f"设置节点41为配角: {char2}")
 
-    # 如果有第三个角色（配角2），则启用图3组
-    if len(characters) >= 3:
+    # 如果有第三个角色，设置节点47
+    if char_count >= 3:
         char3 = characters[2]
-        for node_id in ["47", "46", "48"]:
-            if node_id in workflow:
-                workflow[node_id].pop("mode", None)
-        if "47" in workflow:
-            workflow["47"]["inputs"]["image"] = uploaded_names[char3]
-            print(f"[工作流] 启用图3组，节点47图片: {char3}")
-            if log_callback:
-                log_callback(f"启用图3组，设置节点47为配角: {char3}")
-        else:
-            if log_callback:
-                log_callback("警告：工作流中未找到节点47")
+        workflow["47"]["inputs"]["image"] = uploaded_names[char3]
+        print(f"[工作流] 设置节点47图片: {char3}")
+        if log_callback:
+            log_callback(f"设置节点47为配角: {char3}")
 
     # 设置分辨率
     if width is not None and height is not None:
@@ -8915,23 +9150,168 @@ def generate_all_first_frames(work_dir: str, log_callback=None, width: Optional[
             log_callback(f"首帧图生成完成，成功 {success_count}/{len(prompts)}")
         return all_saved
 
-def generate_single_frame(work_dir: str, shot_id: str, prompt: str, log_callback=None) -> Optional[str]:
-    """重新生成单个镜头的首帧图（占位，暂不实现，因为批量生成更高效）"""
-    # 本函数暂时不实现，因为单张生成可复用批量逻辑但需要单独调用工作流
-    # 实际上可以使用批量生成函数，只传一个镜头
-    asset_path = get_character_asset_path(work_dir)
-    if not asset_path:
+def generate_single_frame(
+    work_dir: str,
+    shot_id: str,
+    prompt: str,
+    log_callback=None,
+    all_characters: Optional[List[str]] = None,
+    width: Optional[int] = None,
+    height: Optional[int] = None
+) -> Optional[str]:
+    """
+    重新生成单个镜头的首帧图
+    根据提示词提取角色，选择对应模板，上传图片，提交工作流，下载图片
+    """
+    # 打印接收到的分辨率
+    print(f"[DEBUG] generate_single_frame 收到分辨率: width={width}, height={height}")
+
+    # 1. 获取角色列表（如果未提供，则从全局资产解析）
+    if not all_characters:
+        from core.i2v.generate_asset_image import parse_global_assets
+        _, chars_dict = parse_global_assets(work_dir)
+        all_characters = list(chars_dict.keys()) if chars_dict else []
+    if not all_characters:
         if log_callback:
-            log_callback("错误：未找到角色定妆照")
+            log_callback("错误：未找到任何角色信息")
         return None
-    try:
-        saved = generate_batch(work_dir, asset_path, [(shot_id, prompt)])
-        if saved and saved[0]:
-            return saved[0]
-    except Exception as e:
+
+    # 2. 从提示词中提取角色
+    chars = extract_characters_from_prompt(prompt, all_characters)
+    if not chars:
+        # 默认使用主角
+        chars = [all_characters[0]]
+    # 确保主角在第一位
+    if all_characters and all_characters[0] in chars:
+        chars.remove(all_characters[0])
+        chars.insert(0, all_characters[0])
+    characters = chars
+
+    # 3. 准备图片路径
+    images_dir = os.path.join(work_dir, "images")
+    char_paths = {}
+    for char in characters:
+        path = os.path.join(images_dir, f"{char}.png")
+        if not os.path.exists(path):
+            if log_callback:
+                log_callback(f"角色 {char} 的定妆照不存在: {path}")
+            return None
+        char_paths[char] = path
+
+    # 4. 上传图片
+    api_url = config_manager.COMFYUI_API_URL
+    uploaded_names = {}
+    for char, path in char_paths.items():
+        uploaded_name = upload_image(api_url, path)
+        if not uploaded_name:
+            if log_callback:
+                log_callback(f"上传角色 {char} 定妆照失败")
+            return None
+        uploaded_names[char] = uploaded_name
         if log_callback:
-            log_callback(f"重新生成失败: {e}")
-    return None
+            log_callback(f"已上传角色 {char} 定妆照")
+
+    # 5. 选择模板
+    char_count = len(characters)
+    if char_count not in TEMPLATE_BY_CHAR_COUNT:
+        if log_callback:
+            log_callback(f"不支持的角色数量: {char_count}")
+        return None
+    workflow_template = TEMPLATE_BY_CHAR_COUNT[char_count]
+    with open(workflow_template, 'r', encoding='utf-8') as f:
+        workflow = json.load(f)
+
+    # 6. 设置节点图片
+    workflow["21"]["inputs"]["image"] = uploaded_names[characters[0]]
+    if char_count >= 2:
+        workflow["41"]["inputs"]["image"] = uploaded_names[characters[1]]
+    if char_count >= 3:
+        workflow["47"]["inputs"]["image"] = uploaded_names[characters[2]]
+
+    # 7. 设置提示词（节点35）
+    workflow["35"]["inputs"]["prompt"] = prompt
+
+    # 8. 设置分辨率（如果提供了宽高）
+    if width is not None and height is not None:
+        # 使用节点18设置分辨率
+        if "18" in workflow and workflow["18"]["class_type"] == "EmptyFlux2LatentImage":
+            workflow["18"]["inputs"]["width"] = width
+            workflow["18"]["inputs"]["height"] = height
+            if log_callback:
+                log_callback(f"设置分镜图分辨率: {width}x{height}")
+        else:
+            if log_callback:
+                log_callback("警告：工作流中未找到节点18（EmptyFlux2LatentImage），无法设置分辨率")
+
+    # 9. 随机种子（节点2）
+    if "2" in workflow:
+        workflow["2"]["inputs"]["noise_seed"] = random.randint(0, 2**64 - 1)
+
+    # 10. 提交工作流
+    prompt_id = submit_workflow(api_url, workflow)
+    if not prompt_id:
+        if log_callback:
+            log_callback("提交工作流失败")
+        return None
+
+    # 11. 内联轮询等待结果
+    if log_callback:
+        log_callback(f"等待镜头 {shot_id} 生成，prompt_id={prompt_id}")
+    start_time = time.time()
+    last_log_time = start_time
+    timeout = 600
+    history = None
+    while time.time() - start_time < timeout:
+        elapsed = time.time() - start_time
+        if time.time() - last_log_time >= 10:
+            msg = f"正在生成镜头 {shot_id}，已等待 {int(elapsed)} 秒..."
+            if log_callback:
+                log_callback(msg)
+            else:
+                print(msg)
+            last_log_time = time.time()
+        url = f"{api_url.rstrip('/')}/history/{prompt_id}"
+        try:
+            resp = requests.get(url, timeout=30)
+            if resp.status_code == 200:
+                data = resp.json()
+                if prompt_id in data:
+                    history = data
+                    break
+        except Exception as e:
+            if log_callback:
+                log_callback(f"查询异常: {e}")
+            else:
+                print(f"查询异常: {e}")
+        time.sleep(2)
+
+    if not history:
+        if log_callback:
+            log_callback("等待超时或任务失败")
+        return None
+
+    # 12. 提取输出图片
+    outputs = history[prompt_id].get('outputs', {})
+    if "27" not in outputs:
+        if log_callback:
+            log_callback("未找到节点27的输出")
+        return None
+    images_output = outputs["27"].get('images', [])
+    if not images_output:
+        if log_callback:
+            log_callback("没有生成图片")
+        return None
+
+    img_info = images_output[0]
+    save_path = os.path.join(images_dir, f"{shot_id}.png")
+    if download_image(api_url, img_info, save_path):
+        if log_callback:
+            log_callback(f"已保存镜头 {shot_id} 首帧图: {save_path}")
+        return save_path
+    else:
+        if log_callback:
+            log_callback("下载图片失败")
+        return None
 
 
 if __name__ == "__main__":
@@ -10349,6 +10729,353 @@ class CountdownTimer:
             self.after_id = self.root.after(1000, self._tick)
 ```
 
+### gui\image_panel.py
+```py
+# gui/image_panel.py
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+import os
+import sys
+import json
+import threading
+import subprocess
+from PIL import Image, ImageTk
+
+class ImagePanel(ttk.Frame):
+    def __init__(self, parent, app):
+        super().__init__(parent)
+        self.app = app
+        self.work_dir = None
+        self.prompts_data = []  # 存储每个镜头的 {shot_id, prompt, image_path, widget_frame, text_widget, img_label}
+        
+        self.create_widgets()
+    
+    def create_widgets(self):
+        # 顶部按钮区域
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(fill='x', padx=5, pady=5)
+        ttk.Button(btn_frame, text="生成首帧提示词", command=self.generate_prompts).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="生成首帧图", command=self.generate_images).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="刷新", command=self.refresh).pack(side='left', padx=2)
+        
+        # 滚动区域
+        self.canvas = tk.Canvas(self, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self, orient='vertical', command=self.canvas.yview)
+        self.scrollable_frame = ttk.Frame(self.canvas)
+        self.scrollable_frame.bind("<Configure>", self._on_frame_configure)
+        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor='nw')
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        
+        self.canvas.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+        
+        # 绑定滚轮
+        self.canvas.bind("<MouseWheel>", self._on_mousewheel)
+        self.scrollable_frame.bind("<MouseWheel>", self._on_mousewheel)
+    
+    def _on_frame_configure(self, event):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+    
+    def _on_mousewheel(self, event):
+        self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+    
+    def set_work_dir(self, work_dir):
+        self.work_dir = work_dir
+        self.refresh()
+    
+    def refresh(self):
+        """刷新整个面板：根据 first_frame_prompts.json 重建所有镜头行"""
+        # 清除原有内容
+        for widget in self.scrollable_frame.winfo_children():
+            widget.destroy()
+        self.prompts_data.clear()
+        
+        if not self.work_dir:
+            return
+        
+        prompts_path = os.path.join(self.work_dir, "first_frame_prompts.json")
+        if not os.path.exists(prompts_path):
+            label = ttk.Label(self.scrollable_frame, text="未找到首帧提示词文件，请点击「生成首帧提示词」")
+            label.pack(pady=20)
+            return
+        
+        with open(prompts_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        images_dir = os.path.join(self.work_dir, "images")
+        os.makedirs(images_dir, exist_ok=True)
+        
+        for item in data:
+            shot_id = item['shot_id']
+            prompt = item['prompt']
+            image_path = os.path.join(images_dir, f"{shot_id}.png")
+            self._add_row(shot_id, prompt, image_path)
+    
+    def _add_row(self, shot_id, prompt, image_path):
+        row_frame = ttk.Frame(self.scrollable_frame)
+        row_frame.pack(fill='x', pady=5, padx=5)
+        
+        # 镜号
+        ttk.Label(row_frame, text=shot_id, width=8).pack(side='left')
+        
+        # 提示词文本框
+        text_widget = tk.Text(row_frame, height=4, wrap='word', font=('微软雅黑', 9))
+        text_widget.insert('1.0', prompt)
+        text_widget.pack(side='left', fill='both', expand=True, padx=5)
+        
+        # 缩略图容器（固定大小 100x100）
+        thumb_frame = tk.Frame(row_frame, width=100, height=100, bg='lightgray')
+        thumb_frame.pack(side='left', padx=5)
+        thumb_frame.pack_propagate(False)  # 禁止子控件改变容器大小
+        img_label = tk.Label(thumb_frame, bg='lightgray')
+        img_label.pack(fill='both', expand=True)
+        
+        # 按钮区域
+        btn_frame = ttk.Frame(row_frame)
+        btn_frame.pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="保存提示词", command=lambda sid=shot_id, txt=text_widget: self._save_prompt(sid, txt)).pack(pady=2)
+        ttk.Button(btn_frame, text="重新生成", command=lambda sid=shot_id, txt=text_widget: self._regenerate_single(sid, txt)).pack(pady=2)
+        ttk.Button(btn_frame, text="上传替换", command=lambda sid=shot_id: self._upload_image(sid)).pack(pady=2)
+        
+        # 加载缩略图（如果存在）
+        if os.path.exists(image_path):
+            try:
+                img = Image.open(image_path)
+                img.thumbnail((100, 100))
+                photo = ImageTk.PhotoImage(img)
+                img_label.config(image=photo)
+                img_label.image = photo
+                img_label.bind('<Button-1>', lambda e, p=image_path: self._preview_image(p))
+            except Exception as e:
+                print(f"加载缩略图失败 {shot_id}: {e}")
+        else:
+            # 未生成图片时，显示灰色占位，并绑定单击事件（可提示未生成）
+            img_label.bind('<Button-1>', lambda e: messagebox.showinfo("提示", f"镜头 {shot_id} 首帧图未生成，请先生成"))
+        
+        self.prompts_data.append({
+            'shot_id': shot_id,
+            'prompt': prompt,
+            'image_path': image_path,
+            'row_frame': row_frame,
+            'text_widget': text_widget,
+            'img_label': img_label
+        })
+    
+    def _save_prompt(self, shot_id, text_widget):
+        new_prompt = text_widget.get('1.0', 'end-1c').strip()
+        if not new_prompt:
+            messagebox.showwarning("提示", "提示词不能为空")
+            return
+        prompts_path = os.path.join(self.work_dir, "first_frame_prompts.json")
+        with open(prompts_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        for item in data:
+            if item['shot_id'] == shot_id:
+                item['prompt'] = new_prompt
+                break
+        with open(prompts_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        self.app.log(f"镜头 {shot_id} 提示词已保存")
+        # 更新内存中的数据
+        for d in self.prompts_data:
+            if d['shot_id'] == shot_id:
+                d['prompt'] = new_prompt
+                break
+    
+    def _regenerate_single(self, shot_id, text_widget):
+        """重新生成单个镜头的首帧图"""
+        # 先保存提示词
+        self._save_prompt(shot_id, text_widget)
+        # 然后调用生成函数
+        self.app.log(f"正在重新生成镜头 {shot_id} 首帧图...")
+        # 获取分辨率
+        resolution = self.app.resolution_var.get()
+        try:
+            width, height = map(int, resolution.split('x'))
+        except:
+            width, height = 1024, 1024
+        from core.i2v.generate_asset_image import generate_asset_image
+        # 使用临时角色名，传入自定义提示词
+        def task():
+            generate_asset_image(
+                work_dir=self.work_dir,
+                character_name="tmp",
+                character_desc="",
+                scene_desc="",
+                style_desc="",
+                custom_prompt=text_widget.get('1.0', 'end-1c').strip(),
+                width=width,
+                height=height,
+                output_filename=f"{shot_id}.png",
+                log_callback=self.app.log
+            )
+            self.app.root.after(0, self.refresh)
+        threading.Thread(target=task, daemon=True).start()
+    
+    def _upload_image(self, shot_id):
+        file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.png *.jpg *.jpeg")])
+        if not file_path:
+            return
+        import shutil
+        target = os.path.join(self.work_dir, "images", f"{shot_id}.png")
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        shutil.copy2(file_path, target)
+        self.refresh()
+        self.app.log(f"镜头 {shot_id} 首帧图已手动替换")
+    
+    def _preview_image(self, path):
+        win = tk.Toplevel(self)
+        win.title("图片预览")
+        win.geometry("800x600")
+        win.attributes('-topmost', True)
+        win.update_idletasks()
+        x = (win.winfo_screenwidth() // 2) - (win.winfo_width() // 2)
+        y = (win.winfo_screenheight() // 2) - (win.winfo_height() // 2)
+        win.geometry(f"+{x}+{y}")
+        
+        canvas = tk.Canvas(win, highlightthickness=0)
+        canvas.pack(fill='both', expand=True)
+        original_img = Image.open(path)
+        img_label = tk.Label(canvas)
+        canvas.create_window((0, 0), window=img_label, anchor='nw')
+        
+        resize_after_id = None
+        def resize(event=None):
+            nonlocal resize_after_id
+            if resize_after_id:
+                win.after_cancel(resize_after_id)
+            resize_after_id = win.after(200, do_resize)
+        
+        def do_resize():
+            w = canvas.winfo_width()
+            h = canvas.winfo_height()
+            if w <= 1 or h <= 1:
+                return
+            iw, ih = original_img.size
+            scale = min(w / iw, h / ih)
+            nw = int(iw * scale)
+            nh = int(ih * scale)
+            resized = original_img.resize((nw, nh), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(resized)
+            img_label.config(image=photo)
+            img_label.image = photo
+            xo = (w - nw) // 2
+            yo = (h - nh) // 2
+            canvas.coords(canvas.find_all()[0], xo, yo)
+            canvas.configure(scrollregion=(0, 0, w, h))
+        
+        win.bind('<Configure>', resize)
+        win.after(100, do_resize)
+    
+    def generate_prompts(self):
+        if not self.work_dir:
+            messagebox.showerror("错误", "未设置工作目录")
+            return
+        shots_path = os.path.join(self.work_dir, "shots.txt")
+        if not os.path.exists(shots_path):
+            messagebox.showerror("错误", "未找到 shots.txt，请先生成剧本")
+            return
+
+        self.app.log("正在生成首帧提示词，请稍候...")
+        script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "core", "generate_first_frame_prompts.py")
+        
+        def run():
+            try:
+                # 强制无缓冲
+                env = os.environ.copy()
+                env["PYTHONUNBUFFERED"] = "1"
+                env["PYTHONIOENCODING"] = "utf-8"   # 强制 UTF-8
+                process = subprocess.Popen(
+                    [sys.executable, script_path, self.work_dir],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    encoding='utf-8',
+                    errors='replace',
+                    env=env
+                )
+                self.app.log("子进程已启动，等待输出...")
+                for line in process.stdout:
+                    line = line.strip()
+                    if line:
+                        self.app.log(line)
+                process.wait()
+                self.app.log(f"子进程结束，返回码: {process.returncode}")
+                if process.returncode != 0:
+                    self.app.root.after(0, lambda: messagebox.showerror("错误", f"生成首帧提示词失败，返回码 {process.returncode}"))
+                else:
+                    self.app.root.after(0, self.refresh)
+            except Exception as e:
+                self.app.root.after(0, lambda: self.app.log(f"生成首帧提示词异常: {e}"))
+        
+        threading.Thread(target=run, daemon=True).start()
+    
+    def generate_images(self):
+        """批量生成所有未生成的首帧图"""
+        if not self.work_dir:
+            messagebox.showerror("错误", "未设置工作目录")
+            return
+        prompts_path = os.path.join(self.work_dir, "first_frame_prompts.json")
+        if not os.path.exists(prompts_path):
+            messagebox.showerror("错误", "未找到首帧提示词文件，请先生成")
+            return
+        
+        # 确认分辨率
+        resolution = self.app.resolution_var.get()
+        width, height = self.app.simple_mode.controller.to_1080p(resolution)  # 添加转换
+        if not resolution:
+            messagebox.showerror("错误", "请先选择分辨率")
+            return
+        try:
+            width, height = map(int, resolution.split('x'))
+        except:
+            width, height = 1024, 1024
+        
+        with open(prompts_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        images_dir = os.path.join(self.work_dir, "images")
+        os.makedirs(images_dir, exist_ok=True)
+        pending = []
+        for item in data:
+            shot_id = item['shot_id']
+            img_path = os.path.join(images_dir, f"{shot_id}.png")
+            if not os.path.exists(img_path):
+                pending.append((shot_id, item['prompt']))
+        
+        if not pending:
+            messagebox.showinfo("提示", "所有镜头首帧图已生成")
+            return
+        
+        self.app.log(f"开始生成 {len(pending)} 个镜头的首帧图，请稍候...")
+        
+        from core.i2v.generate_asset_image import generate_asset_image
+        
+        def task():
+            success_count = 0
+            for shot_id, prompt in pending:
+                self.app.log(f"正在生成镜头 {shot_id}...")
+                result = generate_asset_image(
+                    work_dir=self.work_dir,
+                    character_name="tmp",
+                    character_desc="",
+                    scene_desc="",
+                    style_desc="",
+                    custom_prompt=prompt,
+                    width=width,
+                    height=height,
+                    output_filename=f"{shot_id}.png",
+                    log_callback=self.app.log
+                )
+                if result:
+                    success_count += 1
+            self.app.log(f"首帧图生成完成，成功 {success_count}/{len(pending)} 个")
+            self.app.root.after(0, self.refresh)
+        
+        threading.Thread(target=task, daemon=True).start()
+```
+
 ### gui\log_viewer.py
 ```py
 # gui/log_viewer.py
@@ -11376,7 +12103,7 @@ class SimpleMode:
         # 标签页
         self.notebook = ttk.Notebook(self.frame)
         self.notebook.pack(fill='both', expand=True, padx=5, pady=5)
-        
+                
         from gui.simple.story_tab import StoryTab
         self.story_tab = StoryTab(self.notebook, self.controller)
         self.notebook.add(self.story_tab.frame, text="故事")
@@ -11581,6 +12308,9 @@ import os
 import glob
 import re
 
+from utils import config_manager
+from core.i2v.cfy_i2v import generate_single_video
+
 class StandardVideoPanel:
     def __init__(self, parent, app):
         self.app = app
@@ -11619,6 +12349,7 @@ class StandardVideoPanel:
         self.refresh_btn.pack(side='left', padx=2)
 
         self.tree.bind('<<TreeviewSelect>>', self.on_select)
+        self.tree.bind('<Double-1>', lambda event: self.preview_shot())
 
         # 注册视频生成回调
         if hasattr(app, 'register_video_generation_callback'):
@@ -11629,42 +12360,154 @@ class StandardVideoPanel:
         self.video_dir = os.path.join(work_dir, "视频")
         self.refresh()
 
+    def run_i2v_workflow(self, work_dir, shots_info, resolution, log_callback, on_finish=None, selected_shots=None):
+        if selected_shots:
+            shots_info = [shot for shot in shots_info if shot['id'] in selected_shots]
+            if not shots_info:
+                log_callback("没有选中的镜头，请先选择")
+                return False
+            log_callback(f"将生成 {len(shots_info)} 个选中的镜头")
+        import threading
+        import os
+        import time
+        from tkinter import messagebox
+        from utils import config_manager
+        import core.i2v.cfy_i2v as cfy_i2v
+
+        try:
+            width, height = map(int, resolution.split('x'))
+        except:
+            log_callback("分辨率格式错误")
+            return False
+
+        video_dir = os.path.join(work_dir, "视频")
+        os.makedirs(video_dir, exist_ok=True)
+
+        # 检查首帧图
+        images_dir = os.path.join(work_dir, "images")
+        missing_shots = []
+        for shot in shots_info:
+            shot_id = shot['id']
+            img_path = os.path.join(images_dir, f"{shot_id}.png")
+            if not os.path.exists(img_path):
+                missing_shots.append(shot_id)
+        if missing_shots:
+            log_callback(f"以下镜头缺少首帧图：{', '.join(missing_shots)}")
+            messagebox.showerror("错误", "缺少首帧图，请先在图像面板生成")
+            return False
+
+        # 工作流模板
+        workflow = self.app.workflow_var.get()
+        if workflow == "WAN2.2":
+            log_callback("WAN2.2 暂不支持图生视频，请选择 LTX2.3")
+            messagebox.showerror("错误", "WAN2.2 不支持图生视频")
+            return False
+        else:
+            template_file = "LTX2.3图生API.json"
+
+        api_url = config_manager.COMFYUI_API_URL
+        total = len(shots_info)
+        completed = 0
+        errors = []
+
+        # 重试配置
+        MAX_RETRIES = 3
+        RETRY_DELAY = 2  # 秒
+
+        def generate_with_retry(shot):
+            shot_id = shot['id']
+            image_path = os.path.join(images_dir, f"{shot_id}.png")
+            prompt = shot.get('prompt', '')
+            if not prompt:
+                log_callback(f"镜头 {shot_id} 缺少提示词，跳过")
+                return False
+            duration = shot.get('duration', 10)
+            for attempt in range(MAX_RETRIES):
+                try:
+                    video_path = cfy_i2v.generate_single_video(
+                        work_dir=work_dir,
+                        shot_id=shot_id,
+                        image_path=image_path,
+                        prompt=prompt,
+                        duration=duration + 1,# 补偿 1 秒
+                        width=width,
+                        height=height,
+                        api_url=api_url,
+                        log_callback=log_callback,
+                        auto_trim=True
+                    )
+                    if video_path:
+                        return True
+                    else:
+                        log_callback(f"镜头 {shot_id} 生成失败，第 {attempt+1} 次重试...")
+                        time.sleep(RETRY_DELAY)
+                except Exception as e:
+                    log_callback(f"镜头 {shot_id} 异常: {e}，第 {attempt+1} 次重试...")
+                    time.sleep(RETRY_DELAY)
+            log_callback(f"镜头 {shot_id} 重试 {MAX_RETRIES} 次后仍然失败")
+            return False
+
+        def task():
+            nonlocal completed
+            for idx, shot in enumerate(shots_info, start=1):
+                shot_id = shot['id']
+                log_callback(f"💗💗💗正在生成镜头 {idx}/{total}：{shot_id}...")
+                success = generate_with_retry(shot)
+                if success:
+                    completed += 1
+                    log_callback(f"镜头 {shot_id} 生成成功")
+                else:
+                    errors.append(shot_id)
+            log_callback(f"图生视频完成，成功 {completed}/{total}，失败: {errors}")
+            if on_finish:
+                on_finish()
+            if errors:
+                messagebox.showwarning("部分失败", f"以下镜头生成失败：{', '.join(errors)}")
+
+        threading.Thread(target=task, daemon=True).start()
+        return True
+
     def refresh(self):
         """刷新视频列表"""
         for item in self.tree.get_children():
             self.tree.delete(item)
 
-        if not self.work_dir or not os.path.isdir(self.video_dir):
+        # 确保工作目录已设置（优先使用 self.work_dir，否则从 app 获取）
+        work_dir = self.work_dir or (self.app.work_dir if hasattr(self.app, 'work_dir') else None)
+        if not work_dir:
+            self.tree.insert('', 'end', values=('', '未设置工作目录', ''))
+            return
+
+        # 确保视频目录存在
+        video_dir = os.path.join(work_dir, "视频")
+        if not os.path.isdir(video_dir):
             self.tree.insert('', 'end', values=('', '未找到视频文件夹', ''))
             return
 
-        # 获取镜头信息（优先从 app.shots_info）
-        shots_info = self.app.shots_info
-        if not shots_info:
-            # 降级：从易读版分镜文件读取
-            pattern = os.path.join(self.work_dir, "分镜结果_易读版_*.txt")
-            files = glob.glob(pattern)
-            if files:
-                readable_file = max(files, key=os.path.getmtime)
-                from core.comfyui_manager import ComfyUIManager
-                temp_manager = ComfyUIManager("", "")
-                shots_info = temp_manager.get_shots_info(readable_file)
-
+        # 强制重新从易读版文件读取镜头信息（确保最新，不依赖 app.shots_info 缓存）
+        pattern = os.path.join(work_dir, "分镜结果_易读版_*.txt")
+        files = glob.glob(pattern)
+        shots_info = None
+        if files:
+            readable_file = max(files, key=os.path.getmtime)
+            from core.comfyui_manager import ComfyUIManager
+            temp_manager = ComfyUIManager("", "")
+            shots_info = temp_manager.get_shots_info(readable_file)
         if not shots_info:
             self.tree.insert('', 'end', values=('', '未找到镜头信息', ''))
             return
 
         # 扫描视频文件
         video_files = {}
-        for f in os.listdir(self.video_dir):
+        for f in os.listdir(video_dir):
             if f.startswith("镜头") and (f.endswith(".mp4") or f.endswith(".gif")):
                 shot_id = f[2:].rsplit('.', 1)[0]
-                video_files[shot_id] = os.path.join(self.video_dir, f)
+                video_files[shot_id] = os.path.join(video_dir, f)
 
         self.shots = []
         for shot in shots_info:
             shot_id = shot['id']
-            description = shot.get('visual', '')[:60]  # 使用视觉描述
+            description = shot.get('visual', '')[:60]   # 视觉描述（用于列表显示）
             video_path = video_files.get(shot_id)
             status = "已生成" if video_path else "待生成"
             self.shots.append({
@@ -11750,7 +12593,7 @@ class StepManager:
         base_steps = [
             (os.path.join(project_root, "core", "txt_to_json.py"), "1/3: 转换文稿为JSON", [os.path.join(work_dir, input_filename), story_title, self.mode, work_dir]),
             (os.path.join(project_root, "core", "auto_split_deepseek.py"), "2/3: 生成分镜设计", [work_dir]),
-            (os.path.join(project_root, "core", "extract_prompts.py"), "3/3: 提取提示词并翻译", [work_dir])
+            # (os.path.join(project_root, "core", "extract_prompts.py"), "3/3: 提取提示词并翻译", [work_dir])
         ]
 
         # 检查是否有字幕文件，如果有，则在第一步后插入字幕优化步骤
@@ -13037,753 +13880,6 @@ class StoryWizard:
         tk.messagebox.showerror("错误", f"生成故事失败：{error_msg}")
 ```
 
-### gui\story_wizard旧面板备份.py
-```py
-# gui/story_wizard.py
-import tkinter as tk
-from tkinter import ttk, messagebox
-import json
-import threading
-import re
-
-from utils.ai_utils import call_deepseek
-
-
-class StoryWizard:
-    def __init__(self, parent, app, on_finish):
-        self.parent = parent
-        self.app = app
-        self.on_finish = on_finish  # 回调函数，接收生成的口播稿文本和metadata
-        self.win = tk.Toplevel(parent)
-        self.win.title("故事创作向导")
-        self.win.geometry("600x500")
-        self.win.transient(parent)
-        self.win.grab_set()
-        self.win.protocol("WM_DELETE_WINDOW", self.cancel)
-        self.pending_metadata = None   # 存储智能导入的解析结果
-
-        # 窗口居中
-        screen_width = self.win.winfo_screenwidth()
-        screen_height = self.win.winfo_screenheight()
-        win_width = 600
-        win_height = 500
-        x = (screen_width - win_width) // 2
-        y = (screen_height - win_height) // 2
-        self.win.geometry(f"{win_width}x{win_height}+{x}+{y}")
-
-        # 存储答案的字典
-        self.answers = {}
-
-        # 当前页码 (0,1,2)
-        self.current_page = 0
-
-        self.create_widgets()
-
-        # 创建三个页面的 Frame（但只显示第一个）
-        self.page1_frame = ttk.Frame(self.content_frame)
-        self.page2_frame = ttk.Frame(self.content_frame)
-        self.page3_frame = ttk.Frame(self.content_frame)
-        self.create_page1(self.page1_frame)
-        self.create_page2(self.page2_frame)
-        self.create_page3(self.page3_frame)
-
-        self.show_page(0)
-
-    # ------------------------------------------------------------
-    # 智能导入相关方法
-    # ------------------------------------------------------------
-    def _parse_idea_to_metadata(self, idea_text):
-        """调用AI解析一句话需求，返回metadata字典"""
-        prompt = f"""
-你是一个故事创作助手。请根据用户的一句话需求，提取以下信息，输出一个 JSON 对象。
-如果某项信息无法从需求中推断，则输出 null。
-
-用户需求：{idea_text}
-
-输出 JSON 格式如下：
-{{
-    "form": "2D动画|3D动画|真人实拍|其他",
-    "worldview": "现实世界|历史背景|奇幻架空|科幻未来|其他",
-    "emotion": "温馨治愈|热血励志|悬疑烧脑|幽默喜剧|伤感悲剧|其他",
-    "style_detail": "宫崎骏|新海诚|中国水墨|迪士尼|皮克斯|写实CG|赛博朋克|电影质感|纪录片风格|网剧质感|文艺片|其他",
-    "era_detail": "秦朝|唐朝|宋朝|明朝|民国|魔法|龙|蒸汽朋克|神话|赛博朋克|太空歌剧|后启示录|现代|近未来|过去十年|其他",
-    "core": "一场奇遇|一段旅程|一次成长|一个秘密|其他",
-    "duration_minutes": 数字（分钟）,
-    "gender": "男|女|不限",
-    "age": "少年|青年|中年|老年|不限",
-    "personality": ["热血","冷静","内向","幽默","沉稳"],
-    "plots": ["浪漫邂逅","逆境成长","团队合作","复仇反转","拯救世界"],
-    "tone": "先抑后扬|一路热血|温馨治愈|虐心伤感|幽默搞笑|其他",
-    "special": ["加入动物角色","加入旁白/诗歌","加入音乐元素","加入科幻设定"]
-}}
-注意：
-- 风格细化(style_detail)要根据形式(form)来推断合理值。
-- 时代背景(era_detail)要根据世界观(worldview)来推断。
-- 如果用户提到了具体风格如“宫崎骏”，则 form 应为“2D动画”，style_detail 为“宫崎骏”。
-- 如果用户提到了“迪士尼”，则 form 应为“2D动画”或“3D动画”，style_detail 为“迪士尼”。
-- 时长单位是分钟，如“1分钟”则输出 1。
-- 只输出 JSON，不要有任何额外文字。
-"""
-        try:
-            result = call_deepseek(prompt, temperature=0.3, max_tokens=2000)
-            # 清洗可能的 markdown 代码块
-            result = result.strip()
-            if result.startswith("```json"):
-                result = result[7:]
-            if result.startswith("```"):
-                result = result[3:]
-            if result.endswith("```"):
-                result = result[:-3]
-            result = result.strip()
-            metadata = json.loads(result)
-            return metadata
-        except Exception as e:
-            raise Exception(f"AI解析失败: {e}\n原始返回: {result[:200]}")
-
-    def import_idea(self):
-        idea = self.idea_entry.get().strip()
-        if not idea:
-            messagebox.showwarning("提示", "请输入一句话需求")
-            return
-        self.user_idea = idea
-        self.import_btn.config(state='disabled', text="解析中...")
-
-        def task():
-            try:
-                metadata = self._parse_idea_to_metadata(idea)
-                # 保存到 pending，等进入第二页时再应用
-                self.pending_metadata = metadata
-                self.win.after(0, lambda: self._apply_first_page(metadata))
-                self.win.after(0, lambda: messagebox.showinfo("成功", "智能导入完成，请检查各页选项"))
-            except Exception as e:
-                self.win.after(0, lambda: messagebox.showerror("错误", f"解析失败：{e}"))
-            finally:
-                self.win.after(0, lambda: self.import_btn.config(state='normal', text="智能导入"))
-
-        threading.Thread(target=task, daemon=True).start()
-
-    def _apply_first_page(self, meta):
-        """只设置第一页的控件，第二页等进入时再设"""
-        if meta.get('form'):
-            self.form_var.set(meta['form'])
-            self._on_form_change()
-        if meta.get('worldview'):
-            self.world_var.set(meta['worldview'])
-            self._on_world_change()
-        if meta.get('emotion'):
-            self.emotion_var.set(meta['emotion'])
-            self._on_emotion_change()
-        # 不刷新第二页，等进入第二页时再处理
-
-    def _set_page2_values(self, meta):
-        """设置第二页的控件值（在 refresh_page2 之后调用）"""
-        if hasattr(self, 'style_var') and meta.get('style_detail'):
-            # 检查该选项是否存在，若不存在则设为“其他”并填入输入框
-            if self.style_var.get() != meta['style_detail']:
-                # 尝试在下拉选项中找到该值
-                found = False
-                for widget in self.style_frame.winfo_children():
-                    if isinstance(widget, ttk.Radiobutton) and widget.cget('text') == meta['style_detail']:
-                        found = True
-                        break
-                if found:
-                    self.style_var.set(meta['style_detail'])
-                else:
-                    self.style_var.set("其他")
-                    if hasattr(self, 'style_other_entry') and self.style_other_entry:
-                        self.style_other_entry.delete(0, tk.END)
-                        self.style_other_entry.insert(0, meta['style_detail'])
-        if hasattr(self, 'era_var') and meta.get('era_detail'):
-            found = False
-            for widget in self.era_frame.winfo_children():
-                if isinstance(widget, ttk.Radiobutton) and widget.cget('text') == meta['era_detail']:
-                    found = True
-                    break
-            if found:
-                self.era_var.set(meta['era_detail'])
-            else:
-                self.era_var.set("其他")
-                if hasattr(self, 'era_other_entry') and self.era_other_entry:
-                    self.era_other_entry.delete(0, tk.END)
-                    self.era_other_entry.insert(0, meta['era_detail'])
-        if hasattr(self, 'core_var') and meta.get('core'):
-            if meta['core'] in ["一场奇遇", "一段旅程", "一次成长", "一个秘密", "其他"]:
-                self.core_var.set(meta['core'])
-            else:
-                self.core_var.set("其他")
-                if hasattr(self, 'core_other_entry'):
-                    self.core_other_entry.delete(0, tk.END)
-                    self.core_other_entry.insert(0, meta['core'])
-        print(f"[DEBUG] duration_minutes from meta: {meta.get('duration_minutes')}")
-        if meta.get('duration_minutes') is not None:
-            try:
-                duration = int(meta['duration_minutes'])
-                duration = max(1, min(10, duration))
-                self.duration_var.set(duration)
-                self.duration_label.config(text=f"{duration}分钟")
-                print(f"[DEBUG] after set: {self.duration_var.get()}")
-            except (ValueError, TypeError):
-                pass
-
-    def _set_page3_values(self, meta):
-        """设置第三页的控件值"""
-        if meta.get('gender'):
-            self.gender_var.set(meta['gender'])
-        if meta.get('age'):
-            self.age_var.set(meta['age'])
-        if meta.get('personality'):
-            for trait in meta['personality']:
-                if trait in self.traits_vars:
-                    self.traits_vars[trait].set(True)
-                elif trait.strip():
-                    # 不在预设列表中的，填入“其他”输入框
-                    current = self.trait_other_entry.get().strip()
-                    if current:
-                        self.trait_other_entry.insert(0, trait + "，" + current)
-                    else:
-                        self.trait_other_entry.insert(0, trait)
-        if meta.get('plots'):
-            for plot in meta['plots']:
-                if plot in self.plot_vars:
-                    self.plot_vars[plot].set(True)
-                elif plot.strip():
-                    current = self.plot_other_entry.get().strip()
-                    if current:
-                        self.plot_other_entry.insert(0, plot + "，" + current)
-                    else:
-                        self.plot_other_entry.insert(0, plot)
-        if meta.get('tone'):
-            if meta['tone'] in ["先抑后扬", "一路热血", "温馨治愈", "虐心伤感", "幽默搞笑", "其他"]:
-                self.tone_var.set(meta['tone'])
-            else:
-                self.tone_var.set("其他")
-                self.tone_other_entry.delete(0, tk.END)
-                self.tone_other_entry.insert(0, meta['tone'])
-        if meta.get('special'):
-            for spec in meta['special']:
-                if spec in self.special_vars:
-                    self.special_vars[spec].set(True)
-                elif spec.strip():
-                    current = self.special_other_entry.get().strip()
-                    if current:
-                        self.special_other_entry.insert(0, spec + "，" + current)
-                    else:
-                        self.special_other_entry.insert(0, spec)
-
-    # ------------------------------------------------------------
-    # UI 创建
-    # ------------------------------------------------------------
-    def create_widgets(self):
-        # 顶部标题
-        self.title_label = ttk.Label(self.win, text="第一步：宏观设定", font=('微软雅黑', 12, 'bold'))
-        self.title_label.pack(pady=10)
-
-        # 内容区域
-        self.content_frame = ttk.Frame(self.win)
-        self.content_frame.pack(fill='both', expand=True, padx=10, pady=5)
-
-        # 底部按钮
-        btn_frame = ttk.Frame(self.win)
-        btn_frame.pack(pady=10)
-        self.prev_btn = ttk.Button(btn_frame, text="上一步", command=self.prev_page, state='disabled')
-        self.prev_btn.pack(side='left', padx=5)
-        self.next_btn = ttk.Button(btn_frame, text="下一步", command=self.next_page)
-        self.next_btn.pack(side='left', padx=5)
-        self.cancel_btn = ttk.Button(btn_frame, text="取消", command=self.cancel)
-        self.cancel_btn.pack(side='left', padx=5)
-
-    # ------------------- 第一页 -------------------
-    def create_page1(self, frame):
-        # 智能导入区域
-        idea_frame = ttk.Frame(frame)
-        idea_frame.pack(fill='x', pady=5)
-        ttk.Label(idea_frame, text="一句话需求：").pack(side='left')
-        self.idea_entry = ttk.Entry(idea_frame, width=40)
-        self.idea_entry.pack(side='left', padx=5, fill='x', expand=True)
-        self.import_btn = ttk.Button(idea_frame, text="智能导入", command=self.import_idea)
-        self.import_btn.pack(side='left')
-        ttk.Separator(frame, orient='horizontal').pack(fill='x', pady=5)
-
-        # 1. 形式
-        ttk.Label(frame, text="1. 形式：").pack(anchor='w', pady=(5,0))
-        self.form_var = tk.StringVar()
-        form_frame = ttk.Frame(frame)
-        form_frame.pack(anchor='w', fill='x', pady=2)
-        options = ["真人实拍", "2D动画", "3D动画", "其他"]
-        for opt in options:
-            rb = ttk.Radiobutton(form_frame, text=opt, variable=self.form_var, value=opt)
-            rb.pack(side='left', padx=5)
-        self.form_other_entry = ttk.Entry(form_frame, width=20, state='disabled')
-        self.form_other_entry.pack(side='left', padx=5)
-        self.form_var.trace('w', lambda *a: self._on_form_change())
-
-        # 2. 世界观
-        ttk.Label(frame, text="2. 世界观：").pack(anchor='w', pady=(5,0))
-        self.world_var = tk.StringVar()
-        world_frame = ttk.Frame(frame)
-        world_frame.pack(anchor='w', fill='x', pady=2)
-        world_options = ["现实世界", "历史背景", "奇幻架空", "科幻未来", "其他"]
-        for opt in world_options:
-            rb = ttk.Radiobutton(world_frame, text=opt, variable=self.world_var, value=opt)
-            rb.pack(side='left', padx=5)
-        self.world_other_entry = ttk.Entry(world_frame, width=20, state='disabled')
-        self.world_other_entry.pack(side='left', padx=5)
-        self.world_var.trace('w', lambda *a: self._on_world_change())
-
-        # 3. 情感基调
-        ttk.Label(frame, text="3. 情感基调：").pack(anchor='w', pady=(5,0))
-        self.emotion_var = tk.StringVar()
-        emotion_frame = ttk.Frame(frame)
-        emotion_frame.pack(anchor='w', fill='x', pady=2)
-        emotion_options = ["温馨治愈", "热血励志", "悬疑烧脑", "幽默喜剧", "伤感悲剧", "其他"]
-        for opt in emotion_options:
-            rb = ttk.Radiobutton(emotion_frame, text=opt, variable=self.emotion_var, value=opt)
-            rb.pack(side='left', padx=5)
-        self.emotion_other_entry = ttk.Entry(emotion_frame, width=20, state='disabled')
-        self.emotion_other_entry.pack(side='left', padx=5)
-        self.emotion_var.trace('w', lambda *a: self._on_emotion_change())
-
-    def _on_form_change(self):
-        if self.form_var.get() == "其他":
-            self.form_other_entry.config(state='normal')
-        else:
-            self.form_other_entry.config(state='disabled')
-
-    def _on_world_change(self):
-        if self.world_var.get() == "其他":
-            self.world_other_entry.config(state='normal')
-        else:
-            self.world_other_entry.config(state='disabled')
-
-    def _on_emotion_change(self):
-        if self.emotion_var.get() == "其他":
-            self.emotion_other_entry.config(state='normal')
-        else:
-            self.emotion_other_entry.config(state='disabled')
-
-    # ------------------- 第二页 -------------------
-    def create_page2(self, frame):
-        self.page2_frame = frame
-        # 内容动态生成，先占位，在 refresh_page2 中填充
-        self.refresh_page2()
-
-    def refresh_page2(self):
-        """根据第一页的选择，重新生成第二页的内容"""
-        # 清除原有内容
-        for widget in self.page2_frame.winfo_children():
-            widget.destroy()
-
-        form = self.form_var.get()
-        if form == "其他":
-            form = self.form_other_entry.get().strip() or "其他"
-        world = self.world_var.get()
-        if world == "其他":
-            world = self.world_other_entry.get().strip() or "其他"
-
-        # 1. 风格细化
-        ttk.Label(self.page2_frame, text="1. 风格细化：").pack(anchor='w', pady=(5,0))
-        self.style_frame = ttk.Frame(self.page2_frame)
-        self.style_frame.pack(anchor='w', fill='x', pady=2)
-        self.style_var = tk.StringVar()
-        style_options = []
-        if form == "真人实拍":
-            style_options = ["电影质感", "纪录片风格", "网剧质感", "文艺片"]
-        elif form == "2D动画":
-            style_options = ["宫崎骏", "新海诚", "中国水墨", "迪士尼"]
-        elif form == "3D动画":
-            style_options = ["皮克斯", "写实CG", "赛博朋克"]
-        else:
-            style_options = ["其他"]
-        for opt in style_options:
-            rb = ttk.Radiobutton(self.style_frame, text=opt, variable=self.style_var, value=opt)
-            rb.pack(side='left', padx=5)
-        if "其他" in style_options or not style_options:
-            self.style_other_entry = ttk.Entry(self.style_frame, width=20, state='normal')
-            self.style_other_entry.pack(side='left', padx=5)
-            self.style_var.set("其他")
-        else:
-            self.style_other_entry = None
-            if style_options:
-                self.style_var.set(style_options[0])
-
-        # 2. 时代/背景细化
-        ttk.Label(self.page2_frame, text="2. 时代/背景细化：").pack(anchor='w', pady=(5,0))
-        self.era_frame = ttk.Frame(self.page2_frame)
-        self.era_frame.pack(anchor='w', fill='x', pady=2)
-        self.era_var = tk.StringVar()
-        era_options = []
-        if world == "历史背景":
-            era_options = ["秦朝", "唐朝", "宋朝", "明朝", "民国"]
-        elif world == "奇幻架空":
-            era_options = ["魔法", "龙", "蒸汽朋克", "神话"]
-        elif world == "科幻未来":
-            era_options = ["赛博朋克", "太空歌剧", "后启示录"]
-        elif world == "现实世界":
-            era_options = ["现代", "近未来", "过去十年"]
-        else:
-            era_options = ["其他"]
-        for opt in era_options:
-            rb = ttk.Radiobutton(self.era_frame, text=opt, variable=self.era_var, value=opt)
-            rb.pack(side='left', padx=5)
-        if "其他" in era_options or not era_options:
-            self.era_other_entry = ttk.Entry(self.era_frame, width=20, state='normal')
-            self.era_other_entry.pack(side='left', padx=5)
-            self.era_var.set("其他")
-        else:
-            self.era_other_entry = None
-            if era_options:
-                self.era_var.set(era_options[0])
-
-        # 3. 核心看点
-        ttk.Label(self.page2_frame, text="3. 核心看点：").pack(anchor='w', pady=(5,0))
-        core_frame = ttk.Frame(self.page2_frame)
-        core_frame.pack(anchor='w', fill='x', pady=2)
-        self.core_var = tk.StringVar()
-        core_options = ["一场奇遇", "一段旅程", "一次成长", "一个秘密", "其他"]
-        for opt in core_options:
-            rb = ttk.Radiobutton(core_frame, text=opt, variable=self.core_var, value=opt)
-            rb.pack(side='left', padx=5)
-        self.core_other_entry = ttk.Entry(core_frame, width=20, state='disabled')
-        self.core_other_entry.pack(side='left', padx=5)
-        def on_core_change():
-            if self.core_var.get() == "其他":
-                self.core_other_entry.config(state='normal')
-            else:
-                self.core_other_entry.config(state='disabled')
-        self.core_var.trace('w', lambda *a: on_core_change())
-        self.core_var.set(core_options[0])
-
-        # 4. 目标时长
-        ttk.Label(self.page2_frame, text="4. 目标时长（分钟）：").pack(anchor='w', pady=(5,0))
-        self.duration_var = tk.IntVar(value=5)
-        duration_scale = ttk.Scale(self.page2_frame, from_=1, to=10, orient='horizontal',
-                                   variable=self.duration_var, length=300)
-        duration_scale.pack(anchor='w', fill='x', pady=2)
-        self.duration_label = ttk.Label(self.page2_frame, text="5分钟")
-        self.duration_label.pack(anchor='w')
-        def on_duration(*args):
-            self.duration_label.config(text=f"{self.duration_var.get()}分钟")
-        self.duration_var.trace('w', on_duration)
-
-    # ------------------- 第三页 -------------------
-    def create_page3(self, frame):
-        # 1. 主角设定
-        ttk.Label(frame, text="1. 主角设定：").pack(anchor='w', pady=(5,0))
-        gender_frame = ttk.Frame(frame)
-        gender_frame.pack(anchor='w', fill='x', pady=2)
-        self.gender_var = tk.StringVar(value="不限")
-        ttk.Radiobutton(gender_frame, text="男", variable=self.gender_var, value="男").pack(side='left')
-        ttk.Radiobutton(gender_frame, text="女", variable=self.gender_var, value="女").pack(side='left')
-        ttk.Radiobutton(gender_frame, text="不限", variable=self.gender_var, value="不限").pack(side='left')
-
-        age_frame = ttk.Frame(frame)
-        age_frame.pack(anchor='w', fill='x', pady=2)
-        self.age_var = tk.StringVar(value="不限")
-        ttk.Radiobutton(age_frame, text="少年", variable=self.age_var, value="少年").pack(side='left')
-        ttk.Radiobutton(age_frame, text="青年", variable=self.age_var, value="青年").pack(side='left')
-        ttk.Radiobutton(age_frame, text="中年", variable=self.age_var, value="中年").pack(side='left')
-        ttk.Radiobutton(age_frame, text="老年", variable=self.age_var, value="老年").pack(side='left')
-        ttk.Radiobutton(age_frame, text="不限", variable=self.age_var, value="不限").pack(side='left')
-
-        ttk.Label(frame, text="性格（可多选）：").pack(anchor='w', pady=(5,0))
-        self.traits_vars = {}
-        traits_frame = ttk.Frame(frame)
-        traits_frame.pack(anchor='w', fill='x', pady=2)
-        traits = ["热血", "冷静", "内向", "幽默", "沉稳"]
-        for t in traits:
-            var = tk.BooleanVar()
-            cb = ttk.Checkbutton(traits_frame, text=t, variable=var)
-            cb.pack(side='left', padx=5)
-            self.traits_vars[t] = var
-        self.trait_other_entry = ttk.Entry(traits_frame, width=20)
-        self.trait_other_entry.pack(side='left', padx=5)
-
-        # 2. 关键情节
-        ttk.Label(frame, text="2. 关键情节（可多选，最多3个）：").pack(anchor='w', pady=(5,0))
-        self.plot_vars = {}
-        plot_frame = ttk.Frame(frame)
-        plot_frame.pack(anchor='w', fill='x', pady=2)
-        plots = ["浪漫邂逅", "逆境成长", "团队合作", "复仇反转", "拯救世界"]
-        for p in plots:
-            var = tk.BooleanVar()
-            cb = ttk.Checkbutton(plot_frame, text=p, variable=var)
-            cb.pack(side='left', padx=5)
-            self.plot_vars[p] = var
-        self.plot_other_entry = ttk.Entry(plot_frame, width=20)
-        self.plot_other_entry.pack(side='left', padx=5)
-
-        # 3. 情绪走向
-        ttk.Label(frame, text="3. 情绪走向：").pack(anchor='w', pady=(5,0))
-        self.tone_var = tk.StringVar()
-        tone_frame = ttk.Frame(frame)
-        tone_frame.pack(anchor='w', fill='x', pady=2)
-        tones = ["先抑后扬", "一路热血", "温馨治愈", "虐心伤感", "幽默搞笑", "其他"]
-        for t in tones:
-            rb = ttk.Radiobutton(tone_frame, text=t, variable=self.tone_var, value=t)
-            rb.pack(side='left', padx=5)
-        self.tone_other_entry = ttk.Entry(tone_frame, width=20, state='disabled')
-        self.tone_other_entry.pack(side='left', padx=5)
-        def on_tone_change():
-            if self.tone_var.get() == "其他":
-                self.tone_other_entry.config(state='normal')
-            else:
-                self.tone_other_entry.config(state='disabled')
-        self.tone_var.trace('w', lambda *a: on_tone_change())
-        self.tone_var.set(tones[0])
-
-        # 4. 特殊要求
-        ttk.Label(frame, text="4. 特殊要求（可多选）：").pack(anchor='w', pady=(5,0))
-        self.special_vars = {}
-        special_frame = ttk.Frame(frame)
-        special_frame.pack(anchor='w', fill='x', pady=2)
-        specials = ["加入动物角色", "加入旁白/诗歌", "加入音乐元素", "加入科幻设定"]
-        for s in specials:
-            var = tk.BooleanVar()
-            cb = ttk.Checkbutton(special_frame, text=s, variable=var)
-            cb.pack(side='left', padx=5)
-            self.special_vars[s] = var
-        self.special_other_entry = ttk.Entry(special_frame, width=20)
-        self.special_other_entry.pack(side='left', padx=5)
-
-    # ------------------------------------------------------------
-    # 页面切换与数据收集
-    def show_page(self, page):
-        # 隐藏所有页面
-        self.page1_frame.pack_forget()
-        self.page2_frame.pack_forget()
-        self.page3_frame.pack_forget()
-        
-        if page == 0:
-            self.page1_frame.pack(fill='both', expand=True)
-        elif page == 1:
-            # 刷新第二页
-            self.refresh_page2()
-            # 如果有待应用的 metadata，则设置值
-            if self.pending_metadata:
-                self._set_page2_values(self.pending_metadata)
-                # 第三页也一并设置
-                self._set_page3_values(self.pending_metadata)
-                # 清空，避免重复应用
-                self.pending_metadata = None
-            self.page2_frame.pack(fill='both', expand=True)
-        else:
-            self.page3_frame.pack(fill='both', expand=True)
-
-        # 更新标题和按钮...
-        titles = ["第一步：宏观设定", "第二步：风格与时长", "第三步：细节设定"]
-        self.title_label.config(text=titles[page])
-        self.prev_btn.config(state='normal' if page > 0 else 'disabled')
-        if page == 2:
-            self.next_btn.config(text="完成")
-        else:
-            self.next_btn.config(text="下一步")
-        self.current_page = page
-
-    def next_page(self):
-        if self.current_page == 0:
-            # 收集第一页答案
-            form = self.form_var.get()
-            if form == "其他":
-                form = self.form_other_entry.get().strip()
-                if not form:
-                    messagebox.showwarning("提示", "请输入其他形式")
-                    return
-            world = self.world_var.get()
-            if world == "其他":
-                world = self.world_other_entry.get().strip()
-                if not world:
-                    messagebox.showwarning("提示", "请输入其他世界观")
-                    return
-            emotion = self.emotion_var.get()
-            if emotion == "其他":
-                emotion = self.emotion_other_entry.get().strip()
-                if not emotion:
-                    messagebox.showwarning("提示", "请输入其他情感基调")
-                    return
-            self.answers.update({
-                "形式": form,
-                "世界观": world,
-                "情感基调": emotion
-            })
-            self.current_page = 1
-            self.show_page(1)
-        elif self.current_page == 1:
-            # 收集第二页答案
-            style = self.style_var.get()
-            if style == "其他" and hasattr(self, 'style_other_entry') and self.style_other_entry:
-                style = self.style_other_entry.get().strip()
-                if not style:
-                    messagebox.showwarning("提示", "请输入其他风格")
-                    return
-            era = self.era_var.get()
-            if era == "其他" and hasattr(self, 'era_other_entry') and self.era_other_entry:
-                era = self.era_other_entry.get().strip()
-                if not era:
-                    messagebox.showwarning("提示", "请输入其他时代/背景")
-                    return
-            core = self.core_var.get()
-            if core == "其他":
-                core = self.core_other_entry.get().strip()
-                if not core:
-                    messagebox.showwarning("提示", "请输入其他核心看点")
-                    return
-            duration = self.duration_var.get()
-            self.answers.update({
-                "风格细化": style,
-                "时代背景": era,
-                "核心看点": core,
-                "目标时长": f"{duration}分钟"
-            })
-            self.current_page = 2
-            self.show_page(2)
-        elif self.current_page == 2:
-            # 收集第三页答案
-            gender = self.gender_var.get()
-            age = self.age_var.get()
-            traits = [t for t, var in self.traits_vars.items() if var.get()]
-            other_trait = self.trait_other_entry.get().strip()
-            if other_trait:
-                traits.append(other_trait)
-            plots = [p for p, var in self.plot_vars.items() if var.get()]
-            other_plot = self.plot_other_entry.get().strip()
-            if other_plot:
-                plots.append(other_plot)
-            tone = self.tone_var.get()
-            if tone == "其他":
-                tone = self.tone_other_entry.get().strip()
-                if not tone:
-                    messagebox.showwarning("提示", "请输入其他情绪走向")
-                    return
-            specials = [s for s, var in self.special_vars.items() if var.get()]
-            other_special = self.special_other_entry.get().strip()
-            if other_special:
-                specials.append(other_special)
-
-            self.answers.update({
-                "主角性别": gender,
-                "主角年龄": age,
-                "主角性格": "、".join(traits) if traits else "无特殊",
-                "关键情节": "、".join(plots) if plots else "无",
-                "情绪走向": tone,
-                "特殊要求": "、".join(specials) if specials else "无"
-            })
-            # 生成人设卡并调用 API
-            self.generate_script()
-
-    def prev_page(self):
-        if self.current_page > 0:
-            self.current_page -= 1
-            self.show_page(self.current_page)
-
-    # ------------------------------------------------------------
-    # 生成剧本
-    def generate_script(self):
-        """将答案拼成人设卡，调用 API 生成口播稿和标题"""
-        user_idea = getattr(self, 'user_idea', '')
-        preset = f"""
-    你是一位专业的故事撰稿人。请根据以下要求生成一个完整的故事口播稿，并同时生成一个简洁有力的故事标题。
-
-    【用户核心创意】（必须严格遵循，不得偏离）
-    {user_idea}
-
-    【创作要求】
-    - 形式：{self.answers.get("形式")}
-    - 世界观：{self.answers.get("世界观")}
-    - 情感基调：{self.answers.get("情感基调")}
-    - 风格细化：{self.answers.get("风格细化")}
-    - 时代背景：{self.answers.get("时代背景")}
-    - 核心看点：{self.answers.get("核心看点")}
-    - 目标时长：{self.answers.get("目标时长")}
-    - 主角性别：{self.answers.get("主角性别")}
-    - 主角年龄：{self.answers.get("主角年龄")}
-    - 主角性格：{self.answers.get("主角性格")}
-    - 关键情节：{self.answers.get("关键情节")}
-    - 情绪走向：{self.answers.get("情绪走向")}
-    - 特殊要求：{self.answers.get("特殊要求")}
-
-    【输出要求】
-    - 输出一个 JSON 对象，包含两个字段：title 和 content。
-    - title：故事标题，5-10个字，简洁有力，能概括核心。
-    - content：故事口播稿正文，直接输出，无额外说明，语言生动，适合视频旁白。
-    - 全文约{self.answers.get("目标时长")}的朗读量（约每分钟200字），严格按照目标时长控制篇幅。
-
-    输出格式示例：
-    {{"title": "废土花开", "content": "在荒芜的废土上，熊猫阿六..."}}
-    """
-
-        metadata = {
-            "形式": self.answers.get("形式"),
-            "世界观": self.answers.get("世界观"),
-            "情感基调": self.answers.get("情感基调"),
-            "风格细化": self.answers.get("风格细化"),
-            "时代背景": self.answers.get("时代背景"),
-            "核心看点": self.answers.get("核心看点"),
-            "目标时长": self.answers.get("目标时长"),
-            "主角性别": self.answers.get("主角性别"),
-            "主角年龄": self.answers.get("主角年龄"),
-            "主角性格": self.answers.get("主角性格"),
-            "关键情节": self.answers.get("关键情节"),
-            "情绪走向": self.answers.get("情绪走向"),
-            "特殊要求": self.answers.get("特殊要求")
-        }
-
-        self.app.log("高级向导：正在生成故事和标题，请稍候...")
-        self.win.destroy()
-
-        def task():
-            from utils.ai_utils import call_deepseek
-            try:
-                result = call_deepseek(preset, temperature=0.7, max_tokens=3000)
-                result = result.strip()
-                if result.startswith("```json"):
-                    result = result[7:]
-                if result.startswith("```"):
-                    result = result[3:]
-                if result.endswith("```"):
-                    result = result[:-3]
-                result = result.strip()
-                data = json.loads(result)
-                title = data.get("title", "未命名故事")
-                content = data.get("content", "")
-                self.app.root.after(0, lambda: self._on_generation_done(title, content, metadata))
-            except Exception as e:
-                self.app.root.after(0, lambda: self._on_generation_error(e))
-
-        threading.Thread(target=task, daemon=True).start()
-
-    def _on_generation_done(self, title, script, metadata):
-        # 设置主界面顶部的标题框
-        self.app.toolbar.title_entry.delete(0, tk.END)
-        self.app.toolbar.title_entry.insert(0, title)
-        # 设置一键成片模式自己的标题输入框（重要！）
-        if hasattr(self.app, 'simple_mode') and hasattr(self.app.simple_mode, 'title_entry'):
-            self.app.simple_mode.title_entry.delete(0, tk.END)
-            self.app.simple_mode.title_entry.insert(0, title)
-        # 同时设置 app 的 story_title 变量（备用）
-        self.app.story_title = title
-        
-        # 元数据注释部分不变...
-        meta_lines = ["<!-- 元数据开始"]
-        for k, v in metadata.items():
-            if v and v != "无特殊" and v != "无":
-                meta_lines.append(f"{k}：{v}")
-        meta_lines.append("元数据结束 -->")
-        meta_text = "\n".join(meta_lines) + "\n\n"
-        full_script = meta_text + script
-        self.app.log("高级向导：故事生成完成")
-        try:
-            self.on_finish(full_script, metadata)
-        except Exception as e:
-            self.app.log(f"高级向导回调失败: {e}")
-
-    def _on_generation_error(self, e):
-        self.app.log(f"高级向导：生成故事失败 - {e}")
-        messagebox.showerror("错误", f"生成故事失败：{e}")
-
-    def cancel(self):
-        self.win.destroy()
-```
-
 ### gui\top_toolbar.py
 ```py
 # gui/top_toolbar.py
@@ -13792,13 +13888,13 @@ from tkinter import ttk
 
 # 复制 ASPECT_RATIO_MAP 定义
 ASPECT_RATIO_MAP = {
-    "16:9": ["640x360", "854x480", "1280x720", "1920x1080", "2560x1440"],
+    "16:9": ["1280x720", "1920x1080", "2560x1440", "640x360", "854x480", ],
+    "9:16": ["720x1280", "1080x1920", "1440x2560", "360x640", "480x854"],
     "4:3": ["640x480", "800x600", "1024x768", "1280x960", "1440x1080", "1600x1200", "2048x1536"],
+    "3:4": ["480x640", "720x960", "1080x1440", "1440x1920"],
     "2.35:1": ["1280x544", "1920x816", "3840x1640"],
     "2:1": ["1280x640", "1920x960", "3840x1920"],
     "1.85:1": ["1280x690", "1920x1038", "3840x2076"],
-    "9:16": ["540x960", "720x1280", "1080x1920", "1440x2560"],
-    "3:4": ["480x640", "720x960", "1080x1440", "1440x1920"],
     "1:1": ["640x640", "1024x1024", "1080x1080", "1200x1200"]
 }
 
@@ -13831,7 +13927,7 @@ class TopToolbar:
 
         # 模式（文生/图生）
         tk.Label(row1, text="模式：").pack(side='left', padx=(20,0))
-        self.mode_var = tk.StringVar(value="文生视频")
+        self.mode_var = tk.StringVar(value="图生视频")
         mode_menu = ttk.Combobox(row1, textvariable=self.mode_var,
                                  values=["文生视频", "图生视频"], state="readonly", width=12)
         mode_menu.pack(side='left', padx=5)
@@ -15442,9 +15538,12 @@ class SegmentListPanel(ttk.Frame):
       "中国古代（先秦）",
       "中国古代（秦汉）",
       "中国古代（魏晋南北朝）",
-      "中国古代（隋唐）",
-      "中国古代（宋元）",
-      "中国古代（明清）",
+      "中国古代（隋朝）",
+      "中国古代（唐朝）",
+      "中国古代（宋朝）",
+      "中国古代（元朝）",
+      "中国古代（明朝）",
+      "中国古代（清朝）",
       "中国近代（晚清）",
       "中国近代（民国）",
       "中国近代（抗战）",
@@ -15766,6 +15865,7 @@ import json
 import subprocess
 import sys
 import glob
+import time
 from datetime import datetime
 
 from utils import config_manager
@@ -15824,7 +15924,28 @@ class SimpleModeController:
             self.app.log(f"项目已保存至: {work_dir}")
         StoryWizard(self.app.root, self.app, on_finish)
 
+    def _confirm_resolution(self, action_name):
+        now = time.time()
+        if hasattr(self, '_last_confirm_time') and now - self._last_confirm_time < 1:
+            return self._last_confirm_result
+        resolution = self.app.resolution_var.get()
+        aspect = self.app.aspect_ratio_var.get()
+        if not resolution:
+            return True
+        msg = f"当前选择：宽高比 {aspect}，分辨率 {resolution}\n是否继续{action_name}？"
+        result = messagebox.askyesno("确认", msg)
+        self._last_confirm_time = now
+        self._last_confirm_result = result
+        return result
+
     def generate_asset_images(self):
+        print("generate_asset_images 被调用")
+        if not self._confirm_resolution("生成资产图"):
+            print("用户取消了生成")
+            return
+        print("确认继续")
+        if not self._confirm_resolution("生成资产图"):
+            return
         work_dir = self.ui.work_dir
         if not work_dir:
             messagebox.showerror("错误", "未设置工作目录")
@@ -15844,19 +15965,26 @@ class SimpleModeController:
         self.app.log("开始生成角色资产图（定妆照），请稍候...")
 
         def task():
+            print("=== task 线程开始 ===")
             try:
                 generated = generate_all_assets(work_dir, log_callback=self.app.log, width=width, height=height)
                 if generated:
                     self.app.log(f"资产图生成完成，共 {len(generated)} 张")
                     if hasattr(self.ui, 'storyboard_tab') and self.ui.storyboard_tab:
-                        self.ui.storyboard_tab.refresh()
+                        if self.ui.storyboard_tab.work_dir != work_dir:
+                            self.ui.storyboard_tab.set_work_dir(work_dir)
+                        self.app.root.after(500, self.ui.storyboard_tab.refresh)
                 else:
                     self.app.log("资产图生成失败，请检查日志")
             except Exception as e:
+                print(f"线程异常: {e}")
+                import traceback
+                traceback.print_exc()
                 self.app.log(f"资产图生成异常: {e}")
             finally:
                 self.app.root.after(0, self._reset_asset_buttons)
 
+        print("准备启动线程")  # 这行会打印在 GUI 控制台（因为 print 直接输出到 CMD）
         threading.Thread(target=task, daemon=True).start()
 
     def _reset_asset_buttons(self):
@@ -15864,6 +15992,8 @@ class SimpleModeController:
         self.ui.gen_asset_img_btn.config(text="2. 生成资产图")
 
     def generate_storyboard(self):
+        if not self._confirm_resolution("生成分镜图"):
+            return
         work_dir = self.ui.work_dir
         if not work_dir:
             messagebox.showerror("错误", "未设置工作目录")
@@ -15934,25 +16064,33 @@ class SimpleModeController:
         self.ui.set_button_state('normal', 'normal', 'normal', 'disabled')
         self.ui.gen_storyboard_btn.config(text="3. 生成分镜图")
 
-    def regenerate_asset_with_prompt(self, custom_prompt):
+    def regenerate_asset_with_prompt(self, custom_prompt, character_name=None):
+        print("=== regenerate_asset_with_prompt 被调用 ===")
         work_dir = self.ui.work_dir
         if not work_dir:
             self.app.log("工作目录未设置")
             return
+        # 获取分辨率
+        resolution = self.app.resolution_var.get()
+        width, height = self.to_1080p(resolution)
+        print(f"分辨率: {resolution}, 转换后: {width}x{height}")
         # 获取角色信息
         style, characters = parse_global_assets(work_dir)
         if not characters:
             self.app.log("未找到角色信息")
             return
-        # 取第一个角色（简化，实际可让用户选择）
-        char_name, char_desc = list(characters.items())[0]
+        # 如果指定了角色名，则使用该角色；否则使用第一个
+        if character_name and character_name in characters:
+            char_desc = characters[character_name]
+        else:
+            character_name, char_desc = list(characters.items())[0]
         scene = parse_paragraph1_assets(work_dir)
-        self.app.log("正在重新生成定妆照...")
+        self.app.log(f"正在重新生成定妆照: {character_name}...")
         def task():
             try:
-                result = generate_asset_image_with_prompt(work_dir, char_name, char_desc, scene, style, custom_prompt)
+                result = generate_asset_image_with_prompt(work_dir, character_name, char_desc, scene, style, custom_prompt, width=width, height=height)
                 if result:
-                    self.app.log("定妆照更新成功")
+                    self.app.log(f"{character_name} 定妆照更新成功")
                     self.app.root.after(0, lambda: self.ui.storyboard_tab.refresh())
                 else:
                     self.app.log("定妆照更新失败")
@@ -15971,6 +16109,28 @@ class SimpleModeController:
         work_dir = self.ui.work_dir
         if not work_dir:
             return
+
+        # 获取分辨率
+        resolution = self.app.resolution_var.get()
+        width, height = None, None
+        if resolution and 'x' in resolution:
+            try:
+                w, h = map(int, resolution.split('x'))
+                # 根据宽高比转换为1080P（与批量生成保持一致）
+                if w / h > 1.7:  # 16:9
+                    width, height = 1920, 1080
+                elif h / w > 1.7:  # 9:16
+                    width, height = 1080, 1920
+                else:
+                    width, height = w, h
+            except:
+                pass
+
+        # 获取所有角色列表
+        from core.i2v.generate_asset_image import parse_global_assets
+        _, chars_dict = parse_global_assets(work_dir)
+        all_characters = list(chars_dict.keys()) if chars_dict else []
+
         # 从 first_frame_prompts.json 读取该镜头的提示词
         prompts_path = os.path.join(work_dir, "first_frame_prompts.json")
         import json
@@ -15984,12 +16144,13 @@ class SimpleModeController:
         if not prompt:
             self.app.log(f"未找到镜头 {shot_id} 的提示词")
             return
-        # 调用单个生成函数
+
+        # 调用单个生成函数，传递分辨率
         from core.i2v.generate_first_frame_image import generate_single_frame
         self.app.log(f"正在重新生成镜头 {shot_id}...")
         def task():
             try:
-                generate_single_frame(work_dir, shot_id, prompt, log_callback=self.app.log)
+                generate_single_frame(work_dir, shot_id, prompt, log_callback=self.app.log, all_characters=all_characters, width=width, height=height)
                 self.app.root.after(0, lambda: self.ui.storyboard_tab.refresh())
             except Exception as e:
                 self.app.root.after(0, lambda: self.app.log(f"重绘失败: {e}"))
@@ -16000,6 +16161,9 @@ class SimpleModeController:
         work_dir = self.ui.work_dir
         if not work_dir:
             return
+        resolution = self.app.resolution_var.get()
+        width, height = self.to_1080p(resolution)
+        print(f"分辨率: {resolution}, 转换后: {width}x{height}")
         from core.i2v.generate_asset_image import generate_all_assets
         self.app.log("正在重新生成定妆照...")
         def task():
@@ -16278,6 +16442,8 @@ class SimpleModeController:
 
     # ========== 视频生成 ==========
     def confirm_and_generate(self):
+        if not self._confirm_resolution("生成视频"):
+            return
         """生成视频（根据模式分流）"""
         work_dir = self.ui.work_dir
         if not work_dir:
@@ -16833,10 +16999,11 @@ class ScriptTab:
         left_frame = ttk.Frame(self.paned)
         self.paned.add(left_frame, weight=3)
 
-        columns = ('scene', 'shot', 'description', 'action')
+        columns = ('scene', 'shot', 'duration', 'description', 'action')
         self.tree = ttk.Treeview(left_frame, columns=columns, show='headings')
         self.tree.heading('scene', text='场次')
         self.tree.heading('shot', text='镜头序号')
+        self.tree.heading('duration', text='时长(秒)')
         self.tree.heading('description', text='场景描述')
         self.tree.heading('action', text='镜头描述')
         self.tree.column('scene', width=80, anchor='center')
@@ -16877,8 +17044,8 @@ class ScriptTab:
                 shot_id = f"{scene_id}-{idx}"
                 scene_desc = shot.get('scene', '')[:50]
                 action_desc = shot.get('visual', '')[:50]
-                self.tree.insert('', 'end', values=(scene_id, shot_id, scene_desc, action_desc),
-                                 tags=(scene_id, idx-1))
+                duration = shot.get('duration', 10.0)
+                self.tree.insert('', 'end', values=(scene_id, shot_id, duration, scene_desc, action_desc), tags=(scene_id, idx-1))
 
     def _get_selected_shot(self):
         """获取当前选中的镜头，返回 (scene_index, shot_index, scene_dict, shot_dict)"""
@@ -17404,8 +17571,12 @@ class StoryboardTab:
         left_frame = ttk.Frame(top_frame)
         left_frame.pack(side='left', fill='both', expand=True, padx=5)
         
-        self.asset_preview = tk.Label(left_frame, bg='gray', width=150, height=150)
-        self.asset_preview.pack()
+        # 固定预览图容器大小
+        preview_container = tk.Frame(left_frame, width=200, height=200, bg='gray')
+        preview_container.pack()
+        preview_container.pack_propagate(False)  # 禁止子控件改变容器大小
+        self.asset_preview = tk.Label(preview_container, bg='gray')
+        self.asset_preview.pack(fill='both', expand=True)
         self.asset_preview.bind('<Button-1>', self._preview_asset)
         self.asset_status = ttk.Label(left_frame, text="", foreground='gray')
         self.asset_status.pack()
@@ -17455,6 +17626,7 @@ class StoryboardTab:
         self.refresh()
     
     def set_work_dir(self, work_dir):
+        print(f"set_work_dir called: {work_dir}")
         self.work_dir = work_dir
         self.images_dir = os.path.join(work_dir, "images")
         self.refresh()
@@ -17466,6 +17638,7 @@ class StoryboardTab:
                 self._preview_image(path)
     
     def refresh(self):
+        print("refresh called")
         if not self.work_dir:
             return
         self._refresh_asset_list()
@@ -17475,15 +17648,18 @@ class StoryboardTab:
         if not self.work_dir:
             return []
         global_path = os.path.join(self.work_dir, "assets_global.txt")
+        print(f"global_path exists: {os.path.exists(global_path)}")
         if not os.path.exists(global_path):
             return []
         with open(global_path, 'r', encoding='utf-8') as f:
             content = f.read()
         import re
-        matches = re.findall(r'【[^】]*\s+([^】]+)】', content)
+        matches = re.findall(r'【([^】]+)】', content)
+        print(f"matches: {matches}")
         return matches
     
     def _refresh_asset_list(self):
+        print(f"刷新资产图列表，work_dir={self.work_dir}")
         for widget in self.asset_scrollable.winfo_children():
             widget.destroy()
         self.asset_items.clear()
@@ -17499,20 +17675,33 @@ class StoryboardTab:
         for name in characters:
             frame = ttk.Frame(self.asset_scrollable)
             frame.pack(side='left', padx=5, pady=5)
+
+            # 固定大小容器
+            thumb_container = tk.Frame(frame, width=100, height=100, bg='lightgray')
+            thumb_container.pack()
+            thumb_container.pack_propagate(False)  # 禁止子控件改变大小
+            img_label = tk.Label(thumb_container, bg='lightgray')
+            img_label.pack(fill='both', expand=True)
+
             asset_path = os.path.join(self.images_dir, f"{name}.png")
             if os.path.exists(asset_path):
-                img = Image.open(asset_path)
-                img.thumbnail((80, 80))
-                photo = ImageTk.PhotoImage(img)
-                label = tk.Label(frame, image=photo)
-                label.image = photo
-                label.pack()
+                try:
+                    img = Image.open(asset_path)
+                    img.thumbnail((100, 100))
+                    photo = ImageTk.PhotoImage(img)
+                    img_label.config(image=photo)
+                    img_label.image = photo
+                    img_label.bind('<Button-1>', lambda e, p=asset_path: self._preview_image(p))
+                except Exception as e:
+                    print(f"加载缩略图失败 {name}: {e}")
             else:
-                label = tk.Label(frame, text="未生成", bg='gray', width=10, height=5)
-                label.pack()
+                # 未生成时，显示文字提示
+                img_label.config(text="未生成", font=('微软雅黑', 9))
+                img_label.bind('<Button-1>', lambda e: messagebox.showinfo("提示", f"角色 {name} 资产图未生成"))
+
             ttk.Label(frame, text=name).pack()
-            label.bind('<Button-1>', lambda e, n=name: self._select_character(n))
-            self.asset_items.append((frame, label, name))
+            img_label.bind('<Button-1>', lambda e, n=name: self._select_character(n))
+            self.asset_items.append((frame, img_label, name))
         
         if characters:
             self._select_character(characters[0])
@@ -17522,7 +17711,7 @@ class StoryboardTab:
         asset_path = os.path.join(self.images_dir, f"{name}.png")
         if os.path.exists(asset_path):
             img = Image.open(asset_path)
-            img.thumbnail((150, 150))
+            img.thumbnail((200, 200))
             photo = ImageTk.PhotoImage(img)
             self.asset_preview.config(image=photo)
             self.asset_preview.image = photo
@@ -17570,8 +17759,12 @@ class StoryboardTab:
         prompt_text.insert('1.0', prompt)
         prompt_text.pack(side='left', fill='both', expand=True, padx=5)
         
-        img_label = tk.Label(row_frame, bg='gray', width=100, height=100)
-        img_label.pack(side='left', padx=5)
+        # 缩略图容器（固定大小 100x100）
+        thumb_frame = tk.Frame(row_frame, width=100, height=100, bg='lightgray')
+        thumb_frame.pack(side='left', padx=5)
+        thumb_frame.pack_propagate(False)
+        img_label = tk.Label(thumb_frame, bg='lightgray')
+        img_label.pack(fill='both', expand=True)
         
         btn_frame = ttk.Frame(row_frame)
         btn_frame.pack(side='left', padx=5)
@@ -17679,7 +17872,8 @@ class StoryboardTab:
     def regenerate_asset(self):
         custom_prompt = self.asset_prompt_text.get('1.0', 'end-1c').strip()
         if hasattr(self.controller, 'regenerate_asset_with_prompt'):
-            self.controller.regenerate_asset_with_prompt(custom_prompt)
+            # 传递当前选中的角色名
+            self.controller.regenerate_asset_with_prompt(custom_prompt, self.current_character)
         else:
             messagebox.showwarning("提示", "重新生成定妆照功能未实现")
     
@@ -18461,24 +18655,30 @@ class FreeParser(BaseParser):
 
    **重要：角色固定属性必须严格按照以下格式输出，每个字段都要包含，且描述必须明确、肯定，不得使用“或”等模棱两可的词语。性别字段只能为“男”或“女”。如果原文没有明确，请根据上下文推断最可能的一种，并直接写出。**
    格式：
-   【种族 角色名】 性别：X，年龄：X，发型：X，发色：X，脸型：X，身高：X，体型：X，惯用着装：X，气质描述：X。
-   注意：种族可以是“人类”、“熊猫”、“机器人”、“精灵”等，必须写在角色名前面，用空格分隔。
+   【角色名】 种族：X，性别：X，年龄：X，发型：X，发色：X，脸型：X，身高：X，体型：X，惯用着装：X，气质描述：X。
+   注意：种族可以是“人类”、“熊猫”、“机器人”、“精灵”等。
 
    示例：
    - 角色固定属性：
-     【人类 阿铁】 性别：男，年龄：少年，发型：短发，发色：黑，脸型：圆脸，身高：中等，体型：瘦削，惯用着装：深色短打工匠服，气质描述：坚韧、热血、对锻造充满纯粹热爱。
-     【熊猫 阿六】 性别：男，年龄：青年，发型：短圆耳，发色：黑白相间，脸型：圆脸，身高：中等，体型：圆润敦实，惯用着装：磨损的深色背带工装裤，肩部有简易护甲，左前肢为机械义肢，佩戴护目镜，气质描述：沉稳、坚韧、沉默中带着不容动摇的执着。
+     【阿铁】 种族：人类，性别：男，年龄：少年，发型：短发，发色：黑，脸型：圆脸，身高：中等，体型：瘦削，惯用着装：深色短打工匠服，气质描述：坚韧、热血、对锻造充满纯粹热爱。
+     【阿六】 种族：熊猫，性别：男，年龄：青年，发型：短圆耳，发色：黑白相间，脸型：圆脸，身高：中等，体型：圆润敦实，惯用着装：磨损的深色背带工装裤，肩部有简易护甲，左前肢为机械义肢，佩戴护目镜，气质描述：沉稳、坚韧、沉默中带着不容动摇的执着。
 
 3. 为每个段落提取局部资产库：该段落的场景、角色服装变化、道具、当前情绪、时间、地域等。局部资产也用文本列表形式，每个资产项以“- 键：值”格式输出。
 
    如果指定了目标总时长，请在【局部资产】中添加一行“- 建议时长：X秒”，表示该段落应该占用的时长。
+
+**特别要求：所有涉及时代背景的描述（包括整体视觉风格、角色着装、场景、地域）都必须明确写出具体的朝代/历史时期（如“明代”、“唐代”等）。**
+   - 整体视觉风格中必须包含“历史年代：X”字段，例如“历史年代：明代，标准电影镜头...”。
+   - 角色固定属性中的“惯用着装”必须写明朝代，例如“明代月白色绫袄”。
+   - 局部资产中的“场景”描述必须包含朝代，例如“明代应天府灯市”。
+   - “地域”字段必须按“国家·时代”格式填写，例如“中国·明代”。
 
 请严格按照以下格式输出，不要添加任何额外解释：
 
 【全局资产库】
 - 整体视觉风格：...
 - 角色固定属性：
-  【种族 角色名】 种族：...，性别：...，年龄：...，发型：...，发色：...，脸型：...，身高：...，体型：...，惯用着装：...，气质描述：...
+  【角色名】 种族：...，性别：...，年龄：...，发型：...，发色：...，脸型：...，身高：...，体型：...，惯用着装：...，气质描述：...
 
 【段落 X】
 段落文本内容...（注意：提及角色时必须使用完整名称，如“熊猫阿六”）
@@ -18496,7 +18696,6 @@ class FreeParser(BaseParser):
 - 段落之间用空行分隔。
 - 局部资产中的键名固定为：场景、角色服装、道具、时间、地域、情绪、建议时长。如果某个资产不存在，可以不写。
 - 角色服装可以是多个角色的描述，用分号分隔。
-- 在所有输出中，提及角色时必须使用“种族+名字”的完整形式，例如“熊猫阿六”，不得省略种族。
 
 故事内容：
 {raw_text}
@@ -18563,6 +18762,16 @@ class FreeParser(BaseParser):
             log_error('free_parser', f'段落{paragraph_index} AI调用失败', str(e))
             raise
         scene = self._parse_single_scene(result, paragraph_index)
+        # 调整镜头时长以符合段落配额
+        if scene and suggested_duration > 0:
+            total_duration = sum(shot.get('duration', 0) for shot in scene['shots'])
+            if abs(total_duration - suggested_duration) > 2:
+                scale = suggested_duration / total_duration
+                for shot in scene['shots']:
+                    shot['duration'] = round(shot.get('duration', 0) * scale, 1)
+                # 使用已有的 log 函数（该方法内可用 log）
+                if log:
+                    log(f"段落 {paragraph_index} 镜头总时长从 {total_duration:.1f}s 调整为 {suggested_duration:.1f}s")
         if not scene:
             raise ValueError(f"解析场次失败: {result[:200]}")
         scene['paragraph_index'] = idx
@@ -18594,12 +18803,15 @@ class FreeParser(BaseParser):
         duration_instruction = ""
         if suggested_duration > 0:
             duration_instruction = f"""
-**重要：此段落的目标时长配额为 {suggested_duration} 秒。**
-请生成该段落的分镜头剧本，确保所有镜头的时长总和接近此配额（允许小幅偏差）。每个镜头时长必须在5-15秒之间，根据剧情需要合理分配。
+**严格规定：此段落的目标时长配额为 {suggested_duration} 秒。**
+- 生成该段落的分镜头剧本时，所有镜头的时长总和必须**严格等于** {suggested_duration} 秒，允许误差不超过 ±2 秒。
+- 每个镜头时长必须在 3-15 秒之间（可根据内容适当调整，但必须满足对白时长规则）。
+- 如果估算的镜头总时长与配额不符，请调整镜头数量或每个镜头的时长。
+- **违反此规定将导致生成失败，请务必遵守。**
 """
         else:
             duration_instruction = """
-**重要：每个镜头的时长必须在5-15秒之间**，根据剧情需要合理分配。
+**重要：每个镜头的时长必须在3-15秒之间**，根据剧情需要合理分配。
 """
 
         dialogue_rule = """
@@ -18609,6 +18821,7 @@ class FreeParser(BaseParser):
 - 每个镜头的最终时长必须 >= 最小时长，且不超过 15 秒。
 - 如果某个镜头的对白/旁白为空，时长可在 5-15 秒之间自由分配。
 - 示例：对白“你好吗”（3字）→ 最小时长 1 秒，但镜头时长应至少 5 秒；对白“这是一句很长的旁白，大约有二十八个字”（28字）→ 最小时长 8 秒，则镜头时长必须 >=8 秒。
+**重要：每个镜头必须包含至少一句对白或旁白**。对白应自然融入情节，体现角色性格和当前情绪。旁白可用于描述背景或内心活动。由 AI 根据剧情需要自由创作，确保语言生动、符合整体风格。
 """
 
         prompt = f"""
@@ -18635,9 +18848,9 @@ class FreeParser(BaseParser):
 
 【镜头{paragraph_index}-1：标题】
 - 场景：地点，时间，环境
-- 角色：本镜头出现的角色列表，必须使用完整名称（种族+名字），例如“熊猫阿六”、“人类李雷”。可多个，用逗号分隔。
+- 角色：本镜头出现的角色列表可多个，用逗号分隔。
 - 动作：人物的具体动作描述
-- 对白：角色A：“台词” / 角色B：“台词” （多个对白用 / 分隔）
+- 对白：角色A：“台词” / 角色B：“台词” （多个对白用 / 分隔）【必须至少有一句对白或旁白】
 - 视觉描述：关键画面描述，包括光影、色调、氛围等
 - 时长：X秒（必须满足上述对白时长规则，且范围 5-15 秒）
 - 情绪基调：XX
@@ -19137,9 +19350,6 @@ class StoryParser(BatchParser):
 
 # 政治敏感符号
 避免使用任何可能涉及政治敏感或未经中国官方许可的视觉符号。所有视觉元素应基于普遍认可的文化符号或自然场景。
-
-# 地理背景（可选）
-如果段落内明确提及地理范围，则以最早出现的为准；如果无，则默认继承上下文背景。涉及多国对比时，AI可自由发挥。
 ```
 
 ### prompt_presets\emotional_default.txt
@@ -19214,685 +19424,6 @@ class StoryParser(BatchParser):
 印度为什么走散了？因为它从来没有真正“统一”过。各邦为政，种姓锁死，阶层固化。中国为什么越走越紧？因为我们有华夏史的眼睛——郡县制告诉我们全国一盘棋，商鞅告诉我们打破壁垒，科举告诉我们打通上升通道。这三只眼睛，印度没有。它只能看着自己从“人口红利”走向“人口负担”。时间不会说话，但它会给出答案。我们这代人，正在用华夏史的眼睛，看透这个世界。
 
 最后感谢同志们。下一期，我们用华夏史的眼睛，看透巴西——为什么有资源有土地，却逃不出“中等收入陷阱”？同志们，下期再见。
-
-```
-
-### tools\ffmpeg\LICENSE.txt
-```
-                    GNU GENERAL PUBLIC LICENSE
-                       Version 3, 29 June 2007
-
- Copyright (C) 2007 Free Software Foundation, Inc. <http://fsf.org/>
- Everyone is permitted to copy and distribute verbatim copies
- of this license document, but changing it is not allowed.
-
-                            Preamble
-
-  The GNU General Public License is a free, copyleft license for
-software and other kinds of works.
-
-  The licenses for most software and other practical works are designed
-to take away your freedom to share and change the works.  By contrast,
-the GNU General Public License is intended to guarantee your freedom to
-share and change all versions of a program--to make sure it remains free
-software for all its users.  We, the Free Software Foundation, use the
-GNU General Public License for most of our software; it applies also to
-any other work released this way by its authors.  You can apply it to
-your programs, too.
-
-  When we speak of free software, we are referring to freedom, not
-price.  Our General Public Licenses are designed to make sure that you
-have the freedom to distribute copies of free software (and charge for
-them if you wish), that you receive source code or can get it if you
-want it, that you can change the software or use pieces of it in new
-free programs, and that you know you can do these things.
-
-  To protect your rights, we need to prevent others from denying you
-these rights or asking you to surrender the rights.  Therefore, you have
-certain responsibilities if you distribute copies of the software, or if
-you modify it: responsibilities to respect the freedom of others.
-
-  For example, if you distribute copies of such a program, whether
-gratis or for a fee, you must pass on to the recipients the same
-freedoms that you received.  You must make sure that they, too, receive
-or can get the source code.  And you must show them these terms so they
-know their rights.
-
-  Developers that use the GNU GPL protect your rights with two steps:
-(1) assert copyright on the software, and (2) offer you this License
-giving you legal permission to copy, distribute and/or modify it.
-
-  For the developers' and authors' protection, the GPL clearly explains
-that there is no warranty for this free software.  For both users' and
-authors' sake, the GPL requires that modified versions be marked as
-changed, so that their problems will not be attributed erroneously to
-authors of previous versions.
-
-  Some devices are designed to deny users access to install or run
-modified versions of the software inside them, although the manufacturer
-can do so.  This is fundamentally incompatible with the aim of
-protecting users' freedom to change the software.  The systematic
-pattern of such abuse occurs in the area of products for individuals to
-use, which is precisely where it is most unacceptable.  Therefore, we
-have designed this version of the GPL to prohibit the practice for those
-products.  If such problems arise substantially in other domains, we
-stand ready to extend this provision to those domains in future versions
-of the GPL, as needed to protect the freedom of users.
-
-  Finally, every program is threatened constantly by software patents.
-States should not allow patents to restrict development and use of
-software on general-purpose computers, but in those that do, we wish to
-avoid the special danger that patents applied to a free program could
-make it effectively proprietary.  To prevent this, the GPL assures that
-patents cannot be used to render the program non-free.
-
-  The precise terms and conditions for copying, distribution and
-modification follow.
-
-                       TERMS AND CONDITIONS
-
-  0. Definitions.
-
-  "This License" refers to version 3 of the GNU General Public License.
-
-  "Copyright" also means copyright-like laws that apply to other kinds of
-works, such as semiconductor masks.
-
-  "The Program" refers to any copyrightable work licensed under this
-License.  Each licensee is addressed as "you".  "Licensees" and
-"recipients" may be individuals or organizations.
-
-  To "modify" a work means to copy from or adapt all or part of the work
-in a fashion requiring copyright permission, other than the making of an
-exact copy.  The resulting work is called a "modified version" of the
-earlier work or a work "based on" the earlier work.
-
-  A "covered work" means either the unmodified Program or a work based
-on the Program.
-
-  To "propagate" a work means to do anything with it that, without
-permission, would make you directly or secondarily liable for
-infringement under applicable copyright law, except executing it on a
-computer or modifying a private copy.  Propagation includes copying,
-distribution (with or without modification), making available to the
-public, and in some countries other activities as well.
-
-  To "convey" a work means any kind of propagation that enables other
-parties to make or receive copies.  Mere interaction with a user through
-a computer network, with no transfer of a copy, is not conveying.
-
-  An interactive user interface displays "Appropriate Legal Notices"
-to the extent that it includes a convenient and prominently visible
-feature that (1) displays an appropriate copyright notice, and (2)
-tells the user that there is no warranty for the work (except to the
-extent that warranties are provided), that licensees may convey the
-work under this License, and how to view a copy of this License.  If
-the interface presents a list of user commands or options, such as a
-menu, a prominent item in the list meets this criterion.
-
-  1. Source Code.
-
-  The "source code" for a work means the preferred form of the work
-for making modifications to it.  "Object code" means any non-source
-form of a work.
-
-  A "Standard Interface" means an interface that either is an official
-standard defined by a recognized standards body, or, in the case of
-interfaces specified for a particular programming language, one that
-is widely used among developers working in that language.
-
-  The "System Libraries" of an executable work include anything, other
-than the work as a whole, that (a) is included in the normal form of
-packaging a Major Component, but which is not part of that Major
-Component, and (b) serves only to enable use of the work with that
-Major Component, or to implement a Standard Interface for which an
-implementation is available to the public in source code form.  A
-"Major Component", in this context, means a major essential component
-(kernel, window system, and so on) of the specific operating system
-(if any) on which the executable work runs, or a compiler used to
-produce the work, or an object code interpreter used to run it.
-
-  The "Corresponding Source" for a work in object code form means all
-the source code needed to generate, install, and (for an executable
-work) run the object code and to modify the work, including scripts to
-control those activities.  However, it does not include the work's
-System Libraries, or general-purpose tools or generally available free
-programs which are used unmodified in performing those activities but
-which are not part of the work.  For example, Corresponding Source
-includes interface definition files associated with source files for
-the work, and the source code for shared libraries and dynamically
-linked subprograms that the work is specifically designed to require,
-such as by intimate data communication or control flow between those
-subprograms and other parts of the work.
-
-  The Corresponding Source need not include anything that users
-can regenerate automatically from other parts of the Corresponding
-Source.
-
-  The Corresponding Source for a work in source code form is that
-same work.
-
-  2. Basic Permissions.
-
-  All rights granted under this License are granted for the term of
-copyright on the Program, and are irrevocable provided the stated
-conditions are met.  This License explicitly affirms your unlimited
-permission to run the unmodified Program.  The output from running a
-covered work is covered by this License only if the output, given its
-content, constitutes a covered work.  This License acknowledges your
-rights of fair use or other equivalent, as provided by copyright law.
-
-  You may make, run and propagate covered works that you do not
-convey, without conditions so long as your license otherwise remains
-in force.  You may convey covered works to others for the sole purpose
-of having them make modifications exclusively for you, or provide you
-with facilities for running those works, provided that you comply with
-the terms of this License in conveying all material for which you do
-not control copyright.  Those thus making or running the covered works
-for you must do so exclusively on your behalf, under your direction
-and control, on terms that prohibit them from making any copies of
-your copyrighted material outside their relationship with you.
-
-  Conveying under any other circumstances is permitted solely under
-the conditions stated below.  Sublicensing is not allowed; section 10
-makes it unnecessary.
-
-  3. Protecting Users' Legal Rights From Anti-Circumvention Law.
-
-  No covered work shall be deemed part of an effective technological
-measure under any applicable law fulfilling obligations under article
-11 of the WIPO copyright treaty adopted on 20 December 1996, or
-similar laws prohibiting or restricting circumvention of such
-measures.
-
-  When you convey a covered work, you waive any legal power to forbid
-circumvention of technological measures to the extent such circumvention
-is effected by exercising rights under this License with respect to
-the covered work, and you disclaim any intention to limit operation or
-modification of the work as a means of enforcing, against the work's
-users, your or third parties' legal rights to forbid circumvention of
-technological measures.
-
-  4. Conveying Verbatim Copies.
-
-  You may convey verbatim copies of the Program's source code as you
-receive it, in any medium, provided that you conspicuously and
-appropriately publish on each copy an appropriate copyright notice;
-keep intact all notices stating that this License and any
-non-permissive terms added in accord with section 7 apply to the code;
-keep intact all notices of the absence of any warranty; and give all
-recipients a copy of this License along with the Program.
-
-  You may charge any price or no price for each copy that you convey,
-and you may offer support or warranty protection for a fee.
-
-  5. Conveying Modified Source Versions.
-
-  You may convey a work based on the Program, or the modifications to
-produce it from the Program, in the form of source code under the
-terms of section 4, provided that you also meet all of these conditions:
-
-    a) The work must carry prominent notices stating that you modified
-    it, and giving a relevant date.
-
-    b) The work must carry prominent notices stating that it is
-    released under this License and any conditions added under section
-    7.  This requirement modifies the requirement in section 4 to
-    "keep intact all notices".
-
-    c) You must license the entire work, as a whole, under this
-    License to anyone who comes into possession of a copy.  This
-    License will therefore apply, along with any applicable section 7
-    additional terms, to the whole of the work, and all its parts,
-    regardless of how they are packaged.  This License gives no
-    permission to license the work in any other way, but it does not
-    invalidate such permission if you have separately received it.
-
-    d) If the work has interactive user interfaces, each must display
-    Appropriate Legal Notices; however, if the Program has interactive
-    interfaces that do not display Appropriate Legal Notices, your
-    work need not make them do so.
-
-  A compilation of a covered work with other separate and independent
-works, which are not by their nature extensions of the covered work,
-and which are not combined with it such as to form a larger program,
-in or on a volume of a storage or distribution medium, is called an
-"aggregate" if the compilation and its resulting copyright are not
-used to limit the access or legal rights of the compilation's users
-beyond what the individual works permit.  Inclusion of a covered work
-in an aggregate does not cause this License to apply to the other
-parts of the aggregate.
-
-  6. Conveying Non-Source Forms.
-
-  You may convey a covered work in object code form under the terms
-of sections 4 and 5, provided that you also convey the
-machine-readable Corresponding Source under the terms of this License,
-in one of these ways:
-
-    a) Convey the object code in, or embodied in, a physical product
-    (including a physical distribution medium), accompanied by the
-    Corresponding Source fixed on a durable physical medium
-    customarily used for software interchange.
-
-    b) Convey the object code in, or embodied in, a physical product
-    (including a physical distribution medium), accompanied by a
-    written offer, valid for at least three years and valid for as
-    long as you offer spare parts or customer support for that product
-    model, to give anyone who possesses the object code either (1) a
-    copy of the Corresponding Source for all the software in the
-    product that is covered by this License, on a durable physical
-    medium customarily used for software interchange, for a price no
-    more than your reasonable cost of physically performing this
-    conveying of source, or (2) access to copy the
-    Corresponding Source from a network server at no charge.
-
-    c) Convey individual copies of the object code with a copy of the
-    written offer to provide the Corresponding Source.  This
-    alternative is allowed only occasionally and noncommercially, and
-    only if you received the object code with such an offer, in accord
-    with subsection 6b.
-
-    d) Convey the object code by offering access from a designated
-    place (gratis or for a charge), and offer equivalent access to the
-    Corresponding Source in the same way through the same place at no
-    further charge.  You need not require recipients to copy the
-    Corresponding Source along with the object code.  If the place to
-    copy the object code is a network server, the Corresponding Source
-    may be on a different server (operated by you or a third party)
-    that supports equivalent copying facilities, provided you maintain
-    clear directions next to the object code saying where to find the
-    Corresponding Source.  Regardless of what server hosts the
-    Corresponding Source, you remain obligated to ensure that it is
-    available for as long as needed to satisfy these requirements.
-
-    e) Convey the object code using peer-to-peer transmission, provided
-    you inform other peers where the object code and Corresponding
-    Source of the work are being offered to the general public at no
-    charge under subsection 6d.
-
-  A separable portion of the object code, whose source code is excluded
-from the Corresponding Source as a System Library, need not be
-included in conveying the object code work.
-
-  A "User Product" is either (1) a "consumer product", which means any
-tangible personal property which is normally used for personal, family,
-or household purposes, or (2) anything designed or sold for incorporation
-into a dwelling.  In determining whether a product is a consumer product,
-doubtful cases shall be resolved in favor of coverage.  For a particular
-product received by a particular user, "normally used" refers to a
-typical or common use of that class of product, regardless of the status
-of the particular user or of the way in which the particular user
-actually uses, or expects or is expected to use, the product.  A product
-is a consumer product regardless of whether the product has substantial
-commercial, industrial or non-consumer uses, unless such uses represent
-the only significant mode of use of the product.
-
-  "Installation Information" for a User Product means any methods,
-procedures, authorization keys, or other information required to install
-and execute modified versions of a covered work in that User Product from
-a modified version of its Corresponding Source.  The information must
-suffice to ensure that the continued functioning of the modified object
-code is in no case prevented or interfered with solely because
-modification has been made.
-
-  If you convey an object code work under this section in, or with, or
-specifically for use in, a User Product, and the conveying occurs as
-part of a transaction in which the right of possession and use of the
-User Product is transferred to the recipient in perpetuity or for a
-fixed term (regardless of how the transaction is characterized), the
-Corresponding Source conveyed under this section must be accompanied
-by the Installation Information.  But this requirement does not apply
-if neither you nor any third party retains the ability to install
-modified object code on the User Product (for example, the work has
-been installed in ROM).
-
-  The requirement to provide Installation Information does not include a
-requirement to continue to provide support service, warranty, or updates
-for a work that has been modified or installed by the recipient, or for
-the User Product in which it has been modified or installed.  Access to a
-network may be denied when the modification itself materially and
-adversely affects the operation of the network or violates the rules and
-protocols for communication across the network.
-
-  Corresponding Source conveyed, and Installation Information provided,
-in accord with this section must be in a format that is publicly
-documented (and with an implementation available to the public in
-source code form), and must require no special password or key for
-unpacking, reading or copying.
-
-  7. Additional Terms.
-
-  "Additional permissions" are terms that supplement the terms of this
-License by making exceptions from one or more of its conditions.
-Additional permissions that are applicable to the entire Program shall
-be treated as though they were included in this License, to the extent
-that they are valid under applicable law.  If additional permissions
-apply only to part of the Program, that part may be used separately
-under those permissions, but the entire Program remains governed by
-this License without regard to the additional permissions.
-
-  When you convey a copy of a covered work, you may at your option
-remove any additional permissions from that copy, or from any part of
-it.  (Additional permissions may be written to require their own
-removal in certain cases when you modify the work.)  You may place
-additional permissions on material, added by you to a covered work,
-for which you have or can give appropriate copyright permission.
-
-  Notwithstanding any other provision of this License, for material you
-add to a covered work, you may (if authorized by the copyright holders of
-that material) supplement the terms of this License with terms:
-
-    a) Disclaiming warranty or limiting liability differently from the
-    terms of sections 15 and 16 of this License; or
-
-    b) Requiring preservation of specified reasonable legal notices or
-    author attributions in that material or in the Appropriate Legal
-    Notices displayed by works containing it; or
-
-    c) Prohibiting misrepresentation of the origin of that material, or
-    requiring that modified versions of such material be marked in
-    reasonable ways as different from the original version; or
-
-    d) Limiting the use for publicity purposes of names of licensors or
-    authors of the material; or
-
-    e) Declining to grant rights under trademark law for use of some
-    trade names, trademarks, or service marks; or
-
-    f) Requiring indemnification of licensors and authors of that
-    material by anyone who conveys the material (or modified versions of
-    it) with contractual assumptions of liability to the recipient, for
-    any liability that these contractual assumptions directly impose on
-    those licensors and authors.
-
-  All other non-permissive additional terms are considered "further
-restrictions" within the meaning of section 10.  If the Program as you
-received it, or any part of it, contains a notice stating that it is
-governed by this License along with a term that is a further
-restriction, you may remove that term.  If a license document contains
-a further restriction but permits relicensing or conveying under this
-License, you may add to a covered work material governed by the terms
-of that license document, provided that the further restriction does
-not survive such relicensing or conveying.
-
-  If you add terms to a covered work in accord with this section, you
-must place, in the relevant source files, a statement of the
-additional terms that apply to those files, or a notice indicating
-where to find the applicable terms.
-
-  Additional terms, permissive or non-permissive, may be stated in the
-form of a separately written license, or stated as exceptions;
-the above requirements apply either way.
-
-  8. Termination.
-
-  You may not propagate or modify a covered work except as expressly
-provided under this License.  Any attempt otherwise to propagate or
-modify it is void, and will automatically terminate your rights under
-this License (including any patent licenses granted under the third
-paragraph of section 11).
-
-  However, if you cease all violation of this License, then your
-license from a particular copyright holder is reinstated (a)
-provisionally, unless and until the copyright holder explicitly and
-finally terminates your license, and (b) permanently, if the copyright
-holder fails to notify you of the violation by some reasonable means
-prior to 60 days after the cessation.
-
-  Moreover, your license from a particular copyright holder is
-reinstated permanently if the copyright holder notifies you of the
-violation by some reasonable means, this is the first time you have
-received notice of violation of this License (for any work) from that
-copyright holder, and you cure the violation prior to 30 days after
-your receipt of the notice.
-
-  Termination of your rights under this section does not terminate the
-licenses of parties who have received copies or rights from you under
-this License.  If your rights have been terminated and not permanently
-reinstated, you do not qualify to receive new licenses for the same
-material under section 10.
-
-  9. Acceptance Not Required for Having Copies.
-
-  You are not required to accept this License in order to receive or
-run a copy of the Program.  Ancillary propagation of a covered work
-occurring solely as a consequence of using peer-to-peer transmission
-to receive a copy likewise does not require acceptance.  However,
-nothing other than this License grants you permission to propagate or
-modify any covered work.  These actions infringe copyright if you do
-not accept this License.  Therefore, by modifying or propagating a
-covered work, you indicate your acceptance of this License to do so.
-
-  10. Automatic Licensing of Downstream Recipients.
-
-  Each time you convey a covered work, the recipient automatically
-receives a license from the original licensors, to run, modify and
-propagate that work, subject to this License.  You are not responsible
-for enforcing compliance by third parties with this License.
-
-  An "entity transaction" is a transaction transferring control of an
-organization, or substantially all assets of one, or subdividing an
-organization, or merging organizations.  If propagation of a covered
-work results from an entity transaction, each party to that
-transaction who receives a copy of the work also receives whatever
-licenses to the work the party's predecessor in interest had or could
-give under the previous paragraph, plus a right to possession of the
-Corresponding Source of the work from the predecessor in interest, if
-the predecessor has it or can get it with reasonable efforts.
-
-  You may not impose any further restrictions on the exercise of the
-rights granted or affirmed under this License.  For example, you may
-not impose a license fee, royalty, or other charge for exercise of
-rights granted under this License, and you may not initiate litigation
-(including a cross-claim or counterclaim in a lawsuit) alleging that
-any patent claim is infringed by making, using, selling, offering for
-sale, or importing the Program or any portion of it.
-
-  11. Patents.
-
-  A "contributor" is a copyright holder who authorizes use under this
-License of the Program or a work on which the Program is based.  The
-work thus licensed is called the contributor's "contributor version".
-
-  A contributor's "essential patent claims" are all patent claims
-owned or controlled by the contributor, whether already acquired or
-hereafter acquired, that would be infringed by some manner, permitted
-by this License, of making, using, or selling its contributor version,
-but do not include claims that would be infringed only as a
-consequence of further modification of the contributor version.  For
-purposes of this definition, "control" includes the right to grant
-patent sublicenses in a manner consistent with the requirements of
-this License.
-
-  Each contributor grants you a non-exclusive, worldwide, royalty-free
-patent license under the contributor's essential patent claims, to
-make, use, sell, offer for sale, import and otherwise run, modify and
-propagate the contents of its contributor version.
-
-  In the following three paragraphs, a "patent license" is any express
-agreement or commitment, however denominated, not to enforce a patent
-(such as an express permission to practice a patent or covenant not to
-sue for patent infringement).  To "grant" such a patent license to a
-party means to make such an agreement or commitment not to enforce a
-patent against the party.
-
-  If you convey a covered work, knowingly relying on a patent license,
-and the Corresponding Source of the work is not available for anyone
-to copy, free of charge and under the terms of this License, through a
-publicly available network server or other readily accessible means,
-then you must either (1) cause the Corresponding Source to be so
-available, or (2) arrange to deprive yourself of the benefit of the
-patent license for this particular work, or (3) arrange, in a manner
-consistent with the requirements of this License, to extend the patent
-license to downstream recipients.  "Knowingly relying" means you have
-actual knowledge that, but for the patent license, your conveying the
-covered work in a country, or your recipient's use of the covered work
-in a country, would infringe one or more identifiable patents in that
-country that you have reason to believe are valid.
-
-  If, pursuant to or in connection with a single transaction or
-arrangement, you convey, or propagate by procuring conveyance of, a
-covered work, and grant a patent license to some of the parties
-receiving the covered work authorizing them to use, propagate, modify
-or convey a specific copy of the covered work, then the patent license
-you grant is automatically extended to all recipients of the covered
-work and works based on it.
-
-  A patent license is "discriminatory" if it does not include within
-the scope of its coverage, prohibits the exercise of, or is
-conditioned on the non-exercise of one or more of the rights that are
-specifically granted under this License.  You may not convey a covered
-work if you are a party to an arrangement with a third party that is
-in the business of distributing software, under which you make payment
-to the third party based on the extent of your activity of conveying
-the work, and under which the third party grants, to any of the
-parties who would receive the covered work from you, a discriminatory
-patent license (a) in connection with copies of the covered work
-conveyed by you (or copies made from those copies), or (b) primarily
-for and in connection with specific products or compilations that
-contain the covered work, unless you entered into that arrangement,
-or that patent license was granted, prior to 28 March 2007.
-
-  Nothing in this License shall be construed as excluding or limiting
-any implied license or other defenses to infringement that may
-otherwise be available to you under applicable patent law.
-
-  12. No Surrender of Others' Freedom.
-
-  If conditions are imposed on you (whether by court order, agreement or
-otherwise) that contradict the conditions of this License, they do not
-excuse you from the conditions of this License.  If you cannot convey a
-covered work so as to satisfy simultaneously your obligations under this
-License and any other pertinent obligations, then as a consequence you may
-not convey it at all.  For example, if you agree to terms that obligate you
-to collect a royalty for further conveying from those to whom you convey
-the Program, the only way you could satisfy both those terms and this
-License would be to refrain entirely from conveying the Program.
-
-  13. Use with the GNU Affero General Public License.
-
-  Notwithstanding any other provision of this License, you have
-permission to link or combine any covered work with a work licensed
-under version 3 of the GNU Affero General Public License into a single
-combined work, and to convey the resulting work.  The terms of this
-License will continue to apply to the part which is the covered work,
-but the special requirements of the GNU Affero General Public License,
-section 13, concerning interaction through a network will apply to the
-combination as such.
-
-  14. Revised Versions of this License.
-
-  The Free Software Foundation may publish revised and/or new versions of
-the GNU General Public License from time to time.  Such new versions will
-be similar in spirit to the present version, but may differ in detail to
-address new problems or concerns.
-
-  Each version is given a distinguishing version number.  If the
-Program specifies that a certain numbered version of the GNU General
-Public License "or any later version" applies to it, you have the
-option of following the terms and conditions either of that numbered
-version or of any later version published by the Free Software
-Foundation.  If the Program does not specify a version number of the
-GNU General Public License, you may choose any version ever published
-by the Free Software Foundation.
-
-  If the Program specifies that a proxy can decide which future
-versions of the GNU General Public License can be used, that proxy's
-public statement of acceptance of a version permanently authorizes you
-to choose that version for the Program.
-
-  Later license versions may give you additional or different
-permissions.  However, no additional obligations are imposed on any
-author or copyright holder as a result of your choosing to follow a
-later version.
-
-  15. Disclaimer of Warranty.
-
-  THERE IS NO WARRANTY FOR THE PROGRAM, TO THE EXTENT PERMITTED BY
-APPLICABLE LAW.  EXCEPT WHEN OTHERWISE STATED IN WRITING THE COPYRIGHT
-HOLDERS AND/OR OTHER PARTIES PROVIDE THE PROGRAM "AS IS" WITHOUT WARRANTY
-OF ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING, BUT NOT LIMITED TO,
-THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-PURPOSE.  THE ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE OF THE PROGRAM
-IS WITH YOU.  SHOULD THE PROGRAM PROVE DEFECTIVE, YOU ASSUME THE COST OF
-ALL NECESSARY SERVICING, REPAIR OR CORRECTION.
-
-  16. Limitation of Liability.
-
-  IN NO EVENT UNLESS REQUIRED BY APPLICABLE LAW OR AGREED TO IN WRITING
-WILL ANY COPYRIGHT HOLDER, OR ANY OTHER PARTY WHO MODIFIES AND/OR CONVEYS
-THE PROGRAM AS PERMITTED ABOVE, BE LIABLE TO YOU FOR DAMAGES, INCLUDING ANY
-GENERAL, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES ARISING OUT OF THE
-USE OR INABILITY TO USE THE PROGRAM (INCLUDING BUT NOT LIMITED TO LOSS OF
-DATA OR DATA BEING RENDERED INACCURATE OR LOSSES SUSTAINED BY YOU OR THIRD
-PARTIES OR A FAILURE OF THE PROGRAM TO OPERATE WITH ANY OTHER PROGRAMS),
-EVEN IF SUCH HOLDER OR OTHER PARTY HAS BEEN ADVISED OF THE POSSIBILITY OF
-SUCH DAMAGES.
-
-  17. Interpretation of Sections 15 and 16.
-
-  If the disclaimer of warranty and limitation of liability provided
-above cannot be given local legal effect according to their terms,
-reviewing courts shall apply local law that most closely approximates
-an absolute waiver of all civil liability in connection with the
-Program, unless a warranty or assumption of liability accompanies a
-copy of the Program in return for a fee.
-
-                     END OF TERMS AND CONDITIONS
-
-            How to Apply These Terms to Your New Programs
-
-  If you develop a new program, and you want it to be of the greatest
-possible use to the public, the best way to achieve this is to make it
-free software which everyone can redistribute and change under these terms.
-
-  To do so, attach the following notices to the program.  It is safest
-to attach them to the start of each source file to most effectively
-state the exclusion of warranty; and each file should have at least
-the "copyright" line and a pointer to where the full notice is found.
-
-    <one line to give the program's name and a brief idea of what it does.>
-    Copyright (C) <year>  <name of author>
-
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-Also add information on how to contact you by electronic and paper mail.
-
-  If the program does terminal interaction, make it output a short
-notice like this when it starts in an interactive mode:
-
-    <program>  Copyright (C) <year>  <name of author>
-    This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.
-    This is free software, and you are welcome to redistribute it
-    under certain conditions; type `show c' for details.
-
-The hypothetical commands `show w' and `show c' should show the appropriate
-parts of the General Public License.  Of course, your program's commands
-might be different; for a GUI interface, you would use an "about box".
-
-  You should also get your employer (if you work as a programmer) or school,
-if any, to sign a "copyright disclaimer" for the program, if necessary.
-For more information on this, and how to apply and follow the GNU GPL, see
-<http://www.gnu.org/licenses/>.
-
-  The GNU General Public License does not permit incorporating your program
-into proprietary programs.  If your program is a subroutine library, you
-may consider it more useful to permit linking proprietary applications with
-the library.  If this is what you want to do, use the GNU Lesser General
-Public License instead of this License.  But first, please read
-<http://www.gnu.org/philosophy/why-not-lgpl.html>.
 
 ```
 

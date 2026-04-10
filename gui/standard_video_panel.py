@@ -57,9 +57,16 @@ class StandardVideoPanel:
         self.video_dir = os.path.join(work_dir, "视频")
         self.refresh()
 
-    def run_i2v_workflow(self, work_dir, shots_info, resolution, log_callback, on_finish=None):
+    def run_i2v_workflow(self, work_dir, shots_info, resolution, log_callback, on_finish=None, selected_shots=None):
+        if selected_shots:
+            shots_info = [shot for shot in shots_info if shot['id'] in selected_shots]
+            if not shots_info:
+                log_callback("没有选中的镜头，请先选择")
+                return False
+            log_callback(f"将生成 {len(shots_info)} 个选中的镜头")
         import threading
         import os
+        import time
         from tkinter import messagebox
         from utils import config_manager
         import core.i2v.cfy_i2v as cfy_i2v
@@ -100,26 +107,27 @@ class StandardVideoPanel:
         completed = 0
         errors = []
 
-        def task():
-            nonlocal completed
-            for idx, shot in enumerate(shots_info, start=1):
-                shot_id = shot['id']
-                image_path = os.path.join(images_dir, f"{shot_id}.png")
-                prompt = shot.get('prompt', '')
-                if not prompt:
-                    log_callback(f"镜头 {shot_id} 缺少提示词，跳过")
-                    errors.append(shot_id)
-                    continue
-                duration = shot.get('duration', 10)
-                # 显示进度
-                log_callback(f"正在生成镜头 {idx}/{total}：{shot_id}...")
+        # 重试配置
+        MAX_RETRIES = 3
+        RETRY_DELAY = 2  # 秒
+
+        def generate_with_retry(shot):
+            shot_id = shot['id']
+            image_path = os.path.join(images_dir, f"{shot_id}.png")
+            prompt = shot.get('prompt', '')
+            if not prompt:
+                log_callback(f"镜头 {shot_id} 缺少提示词，跳过")
+                return False
+            duration = shot.get('duration', 10)
+            for attempt in range(MAX_RETRIES):
                 try:
                     video_path = cfy_i2v.generate_single_video(
                         work_dir=work_dir,
                         shot_id=shot_id,
                         image_path=image_path,
                         prompt=prompt,
-                        duration=duration,
+                        duration=duration + 1,# 补偿 1 秒
+                        target_duration=duration,   # 裁剪回原始时长
                         width=width,
                         height=height,
                         api_url=api_url,
@@ -127,12 +135,26 @@ class StandardVideoPanel:
                         auto_trim=True
                     )
                     if video_path:
-                        completed += 1
-                        log_callback(f"镜头 {shot_id} 生成成功")
+                        return True
                     else:
-                        errors.append(shot_id)
+                        log_callback(f"镜头 {shot_id} 生成失败，第 {attempt+1} 次重试...")
+                        time.sleep(RETRY_DELAY)
                 except Exception as e:
-                    log_callback(f"镜头 {shot_id} 生成异常: {e}")
+                    log_callback(f"镜头 {shot_id} 异常: {e}，第 {attempt+1} 次重试...")
+                    time.sleep(RETRY_DELAY)
+            log_callback(f"镜头 {shot_id} 重试 {MAX_RETRIES} 次后仍然失败")
+            return False
+
+        def task():
+            nonlocal completed
+            for idx, shot in enumerate(shots_info, start=1):
+                shot_id = shot['id']
+                log_callback(f"💗💗💗正在生成镜头 {idx}/{total}：{shot_id}...")
+                success = generate_with_retry(shot)
+                if success:
+                    completed += 1
+                    log_callback(f"镜头 {shot_id} 生成成功")
+                else:
                     errors.append(shot_id)
             log_callback(f"图生视频完成，成功 {completed}/{total}，失败: {errors}")
             if on_finish:

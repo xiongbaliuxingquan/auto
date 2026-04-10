@@ -27,8 +27,12 @@ class StoryboardTab:
         left_frame = ttk.Frame(top_frame)
         left_frame.pack(side='left', fill='both', expand=True, padx=5)
         
-        self.asset_preview = tk.Label(left_frame, bg='gray', width=150, height=150)
-        self.asset_preview.pack()
+        # 固定预览图容器大小
+        preview_container = tk.Frame(left_frame, width=200, height=200, bg='gray')
+        preview_container.pack()
+        preview_container.pack_propagate(False)  # 禁止子控件改变容器大小
+        self.asset_preview = tk.Label(preview_container, bg='gray')
+        self.asset_preview.pack(fill='both', expand=True)
         self.asset_preview.bind('<Button-1>', self._preview_asset)
         self.asset_status = ttk.Label(left_frame, text="", foreground='gray')
         self.asset_status.pack()
@@ -78,6 +82,7 @@ class StoryboardTab:
         self.refresh()
     
     def set_work_dir(self, work_dir):
+        print(f"set_work_dir called: {work_dir}")
         self.work_dir = work_dir
         self.images_dir = os.path.join(work_dir, "images")
         self.refresh()
@@ -89,6 +94,7 @@ class StoryboardTab:
                 self._preview_image(path)
     
     def refresh(self):
+        print("refresh called")
         if not self.work_dir:
             return
         self._refresh_asset_list()
@@ -98,15 +104,18 @@ class StoryboardTab:
         if not self.work_dir:
             return []
         global_path = os.path.join(self.work_dir, "assets_global.txt")
+        print(f"global_path exists: {os.path.exists(global_path)}")
         if not os.path.exists(global_path):
             return []
         with open(global_path, 'r', encoding='utf-8') as f:
             content = f.read()
         import re
-        matches = re.findall(r'【[^】]*\s+([^】]+)】', content)
+        matches = re.findall(r'【([^】]+)】', content)
+        print(f"matches: {matches}")
         return matches
     
     def _refresh_asset_list(self):
+        print(f"刷新资产图列表，work_dir={self.work_dir}")
         for widget in self.asset_scrollable.winfo_children():
             widget.destroy()
         self.asset_items.clear()
@@ -122,20 +131,33 @@ class StoryboardTab:
         for name in characters:
             frame = ttk.Frame(self.asset_scrollable)
             frame.pack(side='left', padx=5, pady=5)
+
+            # 固定大小容器
+            thumb_container = tk.Frame(frame, width=100, height=100, bg='lightgray')
+            thumb_container.pack()
+            thumb_container.pack_propagate(False)  # 禁止子控件改变大小
+            img_label = tk.Label(thumb_container, bg='lightgray')
+            img_label.pack(fill='both', expand=True)
+
             asset_path = os.path.join(self.images_dir, f"{name}.png")
             if os.path.exists(asset_path):
-                img = Image.open(asset_path)
-                img.thumbnail((80, 80))
-                photo = ImageTk.PhotoImage(img)
-                label = tk.Label(frame, image=photo)
-                label.image = photo
-                label.pack()
+                try:
+                    img = Image.open(asset_path)
+                    img.thumbnail((100, 100))
+                    photo = ImageTk.PhotoImage(img)
+                    img_label.config(image=photo)
+                    img_label.image = photo
+                    img_label.bind('<Button-1>', lambda e, p=asset_path: self._preview_image(p))
+                except Exception as e:
+                    print(f"加载缩略图失败 {name}: {e}")
             else:
-                label = tk.Label(frame, text="未生成", bg='gray', width=10, height=5)
-                label.pack()
+                # 未生成时，显示文字提示
+                img_label.config(text="未生成", font=('微软雅黑', 9))
+                img_label.bind('<Button-1>', lambda e: messagebox.showinfo("提示", f"角色 {name} 资产图未生成"))
+
             ttk.Label(frame, text=name).pack()
-            label.bind('<Button-1>', lambda e, n=name: self._select_character(n))
-            self.asset_items.append((frame, label, name))
+            img_label.bind('<Button-1>', lambda e, n=name: self._select_character(n))
+            self.asset_items.append((frame, img_label, name))
         
         if characters:
             self._select_character(characters[0])
@@ -145,7 +167,7 @@ class StoryboardTab:
         asset_path = os.path.join(self.images_dir, f"{name}.png")
         if os.path.exists(asset_path):
             img = Image.open(asset_path)
-            img.thumbnail((150, 150))
+            img.thumbnail((200, 200))
             photo = ImageTk.PhotoImage(img)
             self.asset_preview.config(image=photo)
             self.asset_preview.image = photo
@@ -306,7 +328,8 @@ class StoryboardTab:
     def regenerate_asset(self):
         custom_prompt = self.asset_prompt_text.get('1.0', 'end-1c').strip()
         if hasattr(self.controller, 'regenerate_asset_with_prompt'):
-            self.controller.regenerate_asset_with_prompt(custom_prompt)
+            # 传递当前选中的角色名
+            self.controller.regenerate_asset_with_prompt(custom_prompt, self.current_character)
         else:
             messagebox.showwarning("提示", "重新生成定妆照功能未实现")
     
