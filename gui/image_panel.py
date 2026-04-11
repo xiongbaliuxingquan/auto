@@ -288,15 +288,13 @@ class ImagePanel(ttk.Frame):
             messagebox.showerror("错误", "未找到首帧提示词文件，请先生成")
             return
         
-        # 确认分辨率
         resolution = self.app.resolution_var.get()
-        width, height = self.app.simple_mode.controller.to_1080p(resolution)  # 添加转换
         if not resolution:
             messagebox.showerror("错误", "请先选择分辨率")
             return
-        try:
-            width, height = map(int, resolution.split('x'))
-        except:
+        width, height = self.app.simple_mode.controller.to_1080p(resolution)
+        print(f"[DEBUG] generate_images 转换后分辨率: {width}x{height}")
+        if width is None or height is None:
             width, height = 1024, 1024
         
         with open(prompts_path, 'r', encoding='utf-8') as f:
@@ -323,6 +321,7 @@ class ImagePanel(ttk.Frame):
             success_count = 0
             for shot_id, prompt in pending:
                 self.app.log(f"正在生成镜头 {shot_id}...")
+                print(f"[DEBUG] 调用 generate_asset_image，shot_id={shot_id}, width={width}, height={height}")
                 result = generate_asset_image(
                     work_dir=self.work_dir,
                     character_name="tmp",

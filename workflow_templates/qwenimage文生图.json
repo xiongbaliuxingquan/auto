@@ -46,7 +46,7 @@
   },
   "13": {
     "inputs": {
-      "unet_name": "qwen/qwen_image_2512_fp8_e4m3fn.safetensors",
+      "unet_name": "qwen/qwen_image_bf16.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -99,7 +99,7 @@
   },
   "21": {
     "inputs": {
-      "seed": 936861109702514,
+      "seed": 962596302902990,
       "steps": 8,
       "cfg": 1,
       "sampler_name": "res_2s",
@@ -129,7 +129,7 @@
   },
   "24": {
     "inputs": {
-      "text": "超高清，超高细节，正面钢铁侠全身",
+      "text": "",
       "clip": [
         "10",
         0

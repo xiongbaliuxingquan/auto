@@ -385,6 +385,7 @@ def generate_all_first_frames(work_dir: str, log_callback=None, width: Optional[
     # 1. 加载提示词
     try:
         prompts = load_prompts(work_dir)
+        print(f"[DEBUG] 待处理镜头总数: {len(prompts)}, 列表: {[sid for sid, _ in prompts]}")
     except Exception as e:
         if log_callback:
             log_callback(f"加载提示词失败: {e}")

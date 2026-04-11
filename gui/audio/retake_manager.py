@@ -7,7 +7,8 @@ from core.fish_tts import generate_single
 from utils.audio_utils import call_deepseek, get_audio_duration
 
 class RetakeManager:
-    def __init__(self, work_dir, ref_audio_filename, ref_text, language, log_callback, play_audio_callback):
+    def __init__(self, work_dir, ref_audio_filename, ref_text, language, log_callback, play_audio_callback, engine='fish', speed=1.0, get_ref_audio_filename=None, stop_playback_callback=None, get_speed=None):
+        self.stop_playback = stop_playback_callback
         self.work_dir = work_dir
         self.ref_audio_filename = ref_audio_filename
         self.ref_text = ref_text
@@ -15,12 +16,16 @@ class RetakeManager:
         self.log = log_callback
         self.play_audio = play_audio_callback
         self.retake_queue = []
-        self.next_retake_index = 0
+        # self.next_retake_index = 0
         self.retake_thread_running = True
         self.retake_thread = threading.Thread(target=self._process_retake_queue, daemon=True)
         self.retake_thread.start()
         self.retake_scrollable = None
         self.on_segment_updated = None
+        self.engine = engine
+        self.speed = speed
+        self.get_speed = get_speed  # 保存回调
+        self.get_ref_audio_filename = get_ref_audio_filename
 
     def set_retake_scrollable(self, scrollable_frame):
         self.retake_scrollable = scrollable_frame
@@ -88,22 +93,42 @@ class RetakeManager:
                 final_text = item['new_text']
             else:
                 final_text = self._ai_modify_text(item['original_text'], item['problem_desc'])
-            retake_idx = self.next_retake_index
-            self.next_retake_index += 1
+            original_index = item['original_index']
 
             error_msg = None
             try:
-                audio_path = generate_single(
-                    text=final_text,
-                    index=retake_idx,
-                    output_dir=self.work_dir,
-                    ref_audio_filename=self.ref_audio_filename,
-                    ref_text=self.ref_text,
-                    language=self.language
-                )
+                if self.stop_playback:
+                    self.stop_playback()
+                if self.get_speed:
+                    current_speed = self.get_speed()
+                if self.engine == 'omnivoice':
+                    from core.omnivoice_tts import generate_single_omnivoice
+                    # 动态获取最新的参考音频文件名
+                    current_ref = self.ref_audio_filename
+                    if self.get_ref_audio_filename:
+                        current_ref = self.get_ref_audio_filename()
+                    print(f"[DEBUG] Retake OmniVoice: ref_audio_filename = {current_ref}")
+                    audio_path = generate_single_omnivoice(
+                        text=final_text,
+                        index=original_index,
+                        output_dir=self.work_dir,
+                        ref_audio_filename=current_ref,
+                        speed=current_speed,   # 使用动态获取的速度
+                        log_callback=self.log
+                    )
+                else:
+                    audio_path = generate_single(
+                        text=final_text,
+                        index=original_index,
+                        output_dir=self.work_dir,
+                        ref_audio_filename=self.ref_audio_filename,
+                        ref_text=self.ref_text,
+                        language=self.language,
+                        log_callback=self.log
+                    )
                 if audio_path:
                     duration = get_audio_duration(audio_path)
-                    self._on_generation_success(item, audio_path, duration, final_text, retake_idx)
+                    self._on_generation_success(item, audio_path, duration, final_text)
                     continue
                 else:
                     error_msg = "生成失败，返回空路径"
@@ -127,8 +152,9 @@ class RetakeManager:
             self.log(f"AI修改文本失败: {e}")
             return original_text
 
-    def _on_generation_success(self, item, audio_path, duration, new_text, retake_idx):
-        self.log(f"重录完成（序号{retake_idx}）: {new_text[:30]}... 时长 {duration:.2f}s")
+    def _on_generation_success(self, item, audio_path, duration, new_text):
+        original_index = item['original_index']
+        self.log(f"重录完成（原片段{original_index}）: {new_text[:30]}... 时长 {duration:.2f}s")
         row_frame = item['row_frame']
         info = row_frame.pending_info
 
@@ -146,12 +172,12 @@ class RetakeManager:
         info['label_desc'].config(text=preview)
         info['status_label'].config(text="已生成", foreground='green')
         info['play_btn'].config(state='normal', command=lambda: self.play_audio(audio_path))
-        info['confirm_btn'].config(state='normal', command=lambda: self._confirm_retake(item, audio_path, duration, new_text, retake_idx, row_frame))
+        info['confirm_btn'].config(state='normal', command=lambda: self._confirm_retake(item, audio_path, duration, new_text, row_frame))
         row_frame.retake_result = {
             'audio_path': audio_path,
             'duration': duration,
             'new_text': new_text,
-            'retake_idx': retake_idx
+            'original_index': original_index   # 改为存原始序号
         }
 
     def _on_generation_failure(self, item, error_msg):
@@ -197,12 +223,11 @@ class RetakeManager:
         self.retake_queue.append(item)
         self.log(f"已重新加入重录队列: 片段 {item['original_index']}")
 
-    def _confirm_retake(self, item, audio_path, duration, new_text, retake_idx, row_frame):
+    def _confirm_retake(self, item, audio_path, duration, new_text, row_frame):
         self.log(f"确认重录片段（原序号{item['original_index']}）: 新音频 {audio_path}")
         if self.on_segment_updated:
             self.on_segment_updated(item['original_index'], audio_path, duration, new_text)
         row_frame.destroy()
-
     def clear(self):
         for item in self.retake_queue:
             if item.get('row_frame'):

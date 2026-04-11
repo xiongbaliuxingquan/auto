@@ -10,6 +10,7 @@ DEFAULT_USER_SETTINGS = {
     "CHUNK_SIZE": 300,
     "MAX_WORKERS": 8,
     "COMFYUI_API_URL": "https://u882129-773232801368.bjb2.seetacloud.com:8443",
+     "QWENTTS_API_URL": "", 
     "VIDEO_OUTPUT_BASE_DIR": "D:/001视频提取",
     "OUTPUT_ROOT_DIR": BASE_DIR,
     "API_TIMEOUT": 120,
@@ -69,6 +70,7 @@ API_TIMEOUT = _settings["API_TIMEOUT"]
 MAX_RETRIES = _settings.get("MAX_RETRIES", 3)          # 默认3次
 RETRY_DELAY = _settings.get("RETRY_DELAY", 5)          # 默认5秒
 FUZZY_MATCH_THRESHOLD = _settings.get("FUZZY_MATCH_THRESHOLD", 80)
+QWENTTS_API_URL = _settings.get("QWENTTS_API_URL", "")
 
 def load_style_presets():
     """从 user_settings.json 加载风格预设字典"""

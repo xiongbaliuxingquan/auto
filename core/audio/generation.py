@@ -8,7 +8,7 @@ from utils.audio_utils import get_audio_duration
 
 class AudioGenerationController:
     """音频生成控制器：管理队列、状态、重试、持久化、暂停/恢复/取消"""
-    def __init__(self, work_dir, ref_audio_filename, ref_text, language="auto", log_callback=None):
+    def __init__(self, work_dir, ref_audio_filename, ref_text, language="auto", engine="fish", speed=1.0, log_callback=None):
         self.work_dir = work_dir
         self.ref_audio_filename = ref_audio_filename
         self.ref_text = ref_text
@@ -36,6 +36,9 @@ class AudioGenerationController:
         # 持久化文件路径
         self.status_file = os.path.join(work_dir, "segments_info.json")
         self._load_status()            # 加载已有状态
+
+        self.engine = engine
+        self.speed = speed
 
     def set_progress_callback(self, callback):
         """设置进度回调，参数 (completed, total)"""
@@ -227,38 +230,37 @@ class AudioGenerationController:
                 time.sleep(0.5)
 
     def _generate_with_retry(self, index, text):
-        """
-        带重试的生成逻辑
-        返回 (success, audio_path, duration)
-        """
         retries = 0
         while retries <= self.max_retries:
             if retries > 0:
                 self.log(f"片段 {index} 重试第 {retries} 次...")
                 time.sleep(self.retry_delay)
-            # 更新状态为 retrying（仅用于显示）
-            self.status[index]['status'] = 'retrying' if retries > 0 else 'generating'
             try:
-                audio_path = generate_single(
-                    text=text,
-                    index=index,
-                    output_dir=self.work_dir,
-                    ref_audio_filename=self.ref_audio_filename,
-                    ref_text=self.ref_text,
-                    language=self.language,
-                    log_callback=self.log
-                )
+                if self.engine == 'omnivoice':
+                    from core.omnivoice_tts import generate_single_omnivoice
+                    audio_path = generate_single_omnivoice(
+                        text=text,
+                        index=index,
+                        output_dir=self.work_dir,
+                        ref_audio_filename=self.ref_audio_filename,
+                        speed=self.speed,
+                        log_callback=self.log
+                    )
+                else:
+                    from core.fish_tts import generate_single
+                    audio_path = generate_single(
+                        text=text,
+                        index=index,
+                        output_dir=self.work_dir,
+                        ref_audio_filename=self.ref_audio_filename,
+                        ref_text=self.ref_text,
+                        language=self.language,
+                        log_callback=self.log
+                    )
                 if audio_path:
-                    # 等待文件写入完成
-                    for _ in range(30):
-                        if os.path.exists(audio_path):
-                            break
-                        time.sleep(1)
-                    if os.path.exists(audio_path):
-                        duration = get_audio_duration(audio_path)
-                        return True, audio_path, duration
-                    else:
-                        self.log(f"片段 {index} 生成文件超时不存在: {audio_path}")
+                    # 等待文件写入完成...
+                    duration = get_audio_duration(audio_path)
+                    return True, audio_path, duration
                 else:
                     self.log(f"片段 {index} 生成返回空路径")
             except Exception as e:

@@ -69,6 +69,12 @@ def show_settings(parent):
     tk.Entry(win, textvariable=api_url_var, width=60).grid(row=row, column=1, padx=5, pady=5, sticky='ew')
     row += 1
 
+    # Qwen TTS API 地址
+    tk.Label(win, text="Qwen TTS API 地址：").grid(row=row, column=0, padx=5, pady=5, sticky='w')
+    qwents_api_var = tk.StringVar(value=current.get("QWENTTS_API_URL", ""))
+    tk.Entry(win, textvariable=qwents_api_var, width=60).grid(row=row, column=1, padx=5, pady=5, sticky='ew')
+    row += 1
+
     tk.Label(win, text="字幕模糊匹配阈值（70-90）：").grid(row=row, column=0, padx=5, pady=5, sticky='w')
     tk.Entry(win, textvariable=fuzzy_threshold_var, width=10).grid(row=row, column=1, padx=5, pady=5, sticky='w')
     row += 1
@@ -122,6 +128,7 @@ def show_settings(parent):
             "CHUNK_SIZE": chunk_var.get(),
             "MAX_WORKERS": workers_var.get(),
             "COMFYUI_API_URL": api_url_var.get().strip(),
+            "QWENTTS_API_URL": qwents_api_var.get().strip(),
             "VIDEO_OUTPUT_BASE_DIR": video_dir_var.get().strip(),
             "OUTPUT_ROOT_DIR": output_root_var.get().strip(),
             "MAX_RETRIES": max_retries_var.get(),

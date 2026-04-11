@@ -92,6 +92,7 @@ class PlaybackController:
     def stop(self):
         if self._player_available:
             pygame.mixer.music.stop()
+            pygame.mixer.music.unload()   # 显式卸载文件
             self._stop_position_update()
             self.current_file = None
             self.is_paused = False

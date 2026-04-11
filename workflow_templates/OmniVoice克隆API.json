@@ -1,0 +1,102 @@
+{
+  "1": {
+    "inputs": {
+      "audio": "预览_04_语速极快_嗓音清亮_音质浑厚_中年男性.mp3",
+      "audioUI": "/api/view?filename=%E9%A2%84%E8%A7%88_04_%E8%AF%AD%E9%80%9F%E6%9E%81%E5%BF%AB_%E5%97%93%E9%9F%B3%E6%B8%85%E4%BA%AE_%E9%9F%B3%E8%B4%A8%E6%B5%91%E5%8E%9A_%E4%B8%AD%E5%B9%B4%E7%94%B7%E6%80%A7.mp3&type=input&subfolder=&rand=0.31848332351935615"
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "加载音频"
+    }
+  },
+  "2": {
+    "inputs": {
+      "model": "whisper-small (auto-download)",
+      "device": "auto",
+      "dtype": "auto"
+    },
+    "class_type": "OmniVoiceWhisperLoader",
+    "_meta": {
+      "title": "OmniVoice Whisper Loader"
+    }
+  },
+  "3": {
+    "inputs": {
+      "chunk_fade_shape": "linear",
+      "chunk_length": 10,
+      "chunk_overlap": 0.1,
+      "audio": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "AudioSeparation",
+    "_meta": {
+      "title": "AudioSeparation"
+    }
+  },
+  "4": {
+    "inputs": {
+      "prompt": ""
+    },
+    "class_type": "CR Prompt Text",
+    "_meta": {
+      "title": "⚙️ CR Prompt Text"
+    }
+  },
+  "5": {
+    "inputs": {
+      "model": "OmniVoice (auto download)",
+      "text": [
+        "4",
+        0
+      ],
+      "ref_text": "",
+      "steps": 32,
+      "guidance_scale": 2,
+      "t_shift": 0.1,
+      "speed": 1,
+      "duration": 0,
+      "device": "auto",
+      "dtype": "auto",
+      "attention": "auto",
+      "seed": 1328948345,
+      "words_per_chunk": 0,
+      "position_temperature": 5,
+      "class_temperature": 0,
+      "layer_penalty_factor": 5,
+      "denoise": true,
+      "preprocess_prompt": true,
+      "postprocess_output": true,
+      "keep_model_loaded": true,
+      "instruct": "",
+      "ref_audio": [
+        "3",
+        3
+      ],
+      "whisper_model": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "OmniVoiceLongformTTS",
+    "_meta": {
+      "title": "OmniVoice Longform TTS"
+    }
+  },
+  "6": {
+    "inputs": {
+      "filename_prefix": "audio/ComfyUI",
+      "quality": "320k",
+      "audioUI": "",
+      "audio": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "SaveAudioMP3",
+    "_meta": {
+      "title": "保存音频 (MP3)"
+    }
+  }
+}

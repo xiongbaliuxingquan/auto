@@ -118,7 +118,8 @@ class StandardVideoPanel:
             if not prompt:
                 log_callback(f"镜头 {shot_id} 缺少提示词，跳过")
                 return False
-            duration = shot.get('duration', 10)
+            duration_raw = shot.get('duration', 10)           # 原始目标时长，例如 12 秒
+            duration_compensated = duration_raw + 1           # 补偿1秒，应对LTX生成不足
             for attempt in range(MAX_RETRIES):
                 try:
                     video_path = cfy_i2v.generate_single_video(
@@ -126,13 +127,13 @@ class StandardVideoPanel:
                         shot_id=shot_id,
                         image_path=image_path,
                         prompt=prompt,
-                        duration=duration + 1,# 补偿 1 秒
-                        target_duration=duration,   # 裁剪回原始时长
+                        duration=duration_compensated,        # 13秒
+                        target_duration=duration_raw,         # 裁剪回12秒
                         width=width,
                         height=height,
                         api_url=api_url,
                         log_callback=log_callback,
-                        auto_trim=True
+                        auto_trim=True                        # 启用自动裁剪
                     )
                     if video_path:
                         return True

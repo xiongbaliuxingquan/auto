@@ -257,6 +257,7 @@ def generate_asset_image(
                 if "25" in workflow and workflow["25"]["class_type"] == "EmptyLatentImage":
                     workflow["25"]["inputs"]["width"] = width
                     workflow["25"]["inputs"]["height"] = height
+                    print(f"[DEBUG] 工作流节点25实际设置: width={workflow['25']['inputs']['width']}, height={workflow['25']['inputs']['height']}")
                     if log_callback:
                         log_callback(f"设置资产图分辨率: {width}x{height}")
                 else:

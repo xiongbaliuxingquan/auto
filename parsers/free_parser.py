@@ -305,6 +305,28 @@ class FreeParser(BaseParser):
         scene['paragraph_index'] = idx
         for shot in scene.get('shots', []):
             shot['paragraph_index'] = idx
+        # 为每个镜头生成ID（用于日志显示）
+        for i, shot in enumerate(scene['shots'], start=1):
+            shot['id'] = f"{paragraph_index}-{i}"
+        # === 新增：填充对白 ===
+        if scene and scene.get('shots'):
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            from utils import settings
+            with ThreadPoolExecutor(max_workers=min(settings.MAX_WORKERS, len(scene['shots']))) as executor:
+                future_to_shot = {}
+                for shot in scene['shots']:
+                    context = ""  # 如有需要可传入前一个镜头摘要
+                    future = executor.submit(self._fill_dialogue_for_shot, shot, context)
+                    future_to_shot[future] = shot
+                for future in as_completed(future_to_shot):
+                    shot = future_to_shot[future]
+                    try:
+                        dialogue = future.result()
+                        shot['dialogue'] = dialogue
+                    except Exception as e:
+                        shot['dialogue'] = "（对白生成失败）"
+                        if log:
+                            log(f"填充对白失败: {e}")
         return scene
 
     def _build_paragraph_prompt(self, text: str, local_assets_text: str, prev_summary: str, paragraph_index: int, suggested_duration: int = 0, target_duration_minutes: int = 5) -> str:
@@ -335,21 +357,11 @@ class FreeParser(BaseParser):
 - 生成该段落的分镜头剧本时，所有镜头的时长总和必须**严格等于** {suggested_duration} 秒，允许误差不超过 ±2 秒。
 - 每个镜头时长必须在 3-15 秒之间（可根据内容适当调整，但必须满足对白时长规则）。
 - 如果估算的镜头总时长与配额不符，请调整镜头数量或每个镜头的时长。
-- **违反此规定将导致生成失败，请务必遵守。**
+- **重要：每个镜头的时长必须为整数秒。段落内所有镜头的整数秒之和必须严格等于该段落的总时长配额。**
 """
         else:
             duration_instruction = """
-**重要：每个镜头的时长必须在3-15秒之间**，根据剧情需要合理分配。
-"""
-
-        dialogue_rule = """
-【对白与时长匹配规则】（必须严格遵守）
-- 中文对白/旁白：按平均语速 3.5 字/秒 计算所需最小秒数。
-- 公式：最小时长 = ceil(对白/旁白总字数 / 3.5)
-- 每个镜头的最终时长必须 >= 最小时长，且不超过 15 秒。
-- 如果某个镜头的对白/旁白为空，时长可在 5-15 秒之间自由分配。
-- 示例：对白“你好吗”（3字）→ 最小时长 1 秒，但镜头时长应至少 5 秒；对白“这是一句很长的旁白，大约有二十八个字”（28字）→ 最小时长 8 秒，则镜头时长必须 >=8 秒。
-**重要：每个镜头必须包含至少一句对白或旁白**。对白应自然融入情节，体现角色性格和当前情绪。旁白可用于描述背景或内心活动。由 AI 根据剧情需要自由创作，确保语言生动、符合整体风格。
+**重要：每个镜头的时长必须为整数秒。段落内所有镜头的整数秒之和必须严格等于该段落的总时长配额。每个镜头的时长必须在3-15秒之间**，根据剧情需要合理分配。
 """
 
         prompt = f"""
@@ -370,7 +382,7 @@ class FreeParser(BaseParser):
 {text}
 
 {duration_instruction}
-{dialogue_rule}
+（此处已移除对话规则提示）
 
 请严格按照以下格式输出，每个镜头单独一块，用空行分隔。镜头顺序按故事发展排列。
 
@@ -378,11 +390,13 @@ class FreeParser(BaseParser):
 - 场景：地点，时间，环境
 - 角色：本镜头出现的角色列表可多个，用逗号分隔。
 - 动作：人物的具体动作描述
-- 对白：角色A：“台词” / 角色B：“台词” （多个对白用 / 分隔）【必须至少有一句对白或旁白】
+- 对白：[留空，稍后填充]  ← 注意这里
 - 视觉描述：关键画面描述，包括光影、色调、氛围等
 - 时长：X秒（必须满足上述对白时长规则，且范围 5-15 秒）
 - 情绪基调：XX
 - 地域：国家·时代（例如“中国·唐朝”或“全球·无明确时代”）
+
+**重要**：本阶段不需要生成对白内容，对白字段必须输出“[留空，稍后填充]”。请集中精力设计镜头结构、时长分配和视觉描述。后续将由专门步骤根据时长精确填充对白。
 
 【镜头{paragraph_index}-2：标题】
 ...
@@ -419,6 +433,79 @@ class FreeParser(BaseParser):
             'shots': shots
         }
 
+    def _fill_dialogue_for_shot(self, shot: Dict, context_info: str = "", max_retries: int = 2) -> str:
+        """
+        为单个镜头生成符合时长约束的对白/旁白。
+        利用 DeepSeek 缓存：系统提示固定，仅用户内容变化。
+        """
+        import requests
+        from utils import config_manager
+        
+        duration = shot.get('duration', 10)
+        max_chars = int(duration * 3.5)
+
+        system_prompt = "你是一个编剧。严格按字数限制生成对白，并标注说话人。"
+
+        user_prompt = f"""
+    【镜头时长】{duration}秒。对白/旁白总字数不得超过{max_chars}字。
+    【镜头信息】
+    场景：{shot.get('scene', '')}
+    角色：{', '.join(shot.get('roles', []))}
+    动作：{shot.get('action', '')}
+    视觉：{shot.get('visual', '')}
+    情绪：{shot.get('emotion', '')}
+
+    【输出要求】
+    1. 严格不超过{max_chars}字。
+    2. 格式：`角色名：“内容”` 或 `旁白：“内容”`。
+    只输出文本，无其他。
+
+    {context_info}
+    """
+        # 打印完整提示词（便于调试）
+        if self.log_callback:
+            self.log_callback(f"[DEBUG] 镜头 {shot.get('id', '?')} 填充对白提示词:\n{user_prompt}")
+
+        api_key, model = config_manager.load_config()
+        if not api_key:
+            raise ValueError("未配置 API Key")
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": model or "deepseek-chat",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 300
+        }
+        
+        for attempt in range(max_retries):
+            try:
+                resp = requests.post("https://api.deepseek.com/v1/chat/completions", 
+                                    headers=headers, json=payload, timeout=30)
+                if resp.status_code == 200:
+                    result = resp.json()["choices"][0]["message"]["content"].strip()
+                    # 打印 AI 原始返回内容（截断前）
+                    if self.log_callback:
+                        self.log_callback(f"[DEBUG] 镜头 {shot.get('id', '?')} AI返回原始对白 ({len(result)}字): {result}")
+                    if len(result) > max_chars + 6:
+                        result = result[:max_chars + 6]
+                        if self.log_callback:
+                            self.log_callback(f"警告：镜头 {shot.get('id', '?')} 对白超长，已截断至 {max_chars + 6} 字。")
+                    return result
+                else:
+                    if attempt == max_retries - 1:
+                        return "（对白生成失败）"
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    return "（对白生成失败）"
+        return "（对白生成失败）"
+
     def _create_fallback_scene(self, text: str) -> Dict:
         return {
             "id": 0,
@@ -436,6 +523,7 @@ class FreeParser(BaseParser):
                 }
             ]
         }
+
 
     # ===================== 降级方案 =====================
     def _fallback_parse(self, raw_text: str, log) -> Dict:

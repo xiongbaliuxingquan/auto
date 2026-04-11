@@ -13,6 +13,7 @@ import subprocess
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext, simpledialog, filedialog
 import re
+import glob
 
 # 导入主应用的工具
 from utils import config_manager
@@ -101,6 +102,10 @@ class AudioPanel(ttk.Frame):
             on_position_update=self._on_playback_position,
             on_playback_end=self._on_playback_end
         )
+
+        # 新增：TTS 引擎选择变量和语速变量
+        self.tts_engine_var = tk.StringVar(value="omnivoice")
+        self.speed_var = tk.DoubleVar(value=1.0)
 
         self.create_widgets()
 
@@ -200,7 +205,7 @@ class AudioPanel(ttk.Frame):
                     seg['retake_btn'].config(state='normal', command=lambda i=index: self.request_retake(i))
                     seg['confirm_btn'].config(state='normal', command=lambda i=index: self.confirm_segment(i))
                     self.log(f"片段 {index} 生成完成，时长 {duration:.2f}s")
-                    self.show_reminder(index)
+                    # self.show_reminder(index)
                 else:
                     seg['status_var'].set("生成失败")
                     self.log(f"片段 {index} 生成失败")
@@ -276,13 +281,15 @@ class AudioPanel(ttk.Frame):
                 self.app.root.after(0, lambda: self.log("auto_split_deepseek.py 执行失败"))
                 self.app.root.after(0, lambda: self.align_btn.config(state='normal', text="生成视频提示词"))
                 return
-            self.log("开始提取并翻译提示词...")
-            cmd5 = [sys.executable, os.path.join(project_root, "core", "extract_prompts.py"), self.work_dir]
-            rc5, success5 = run_cmd(cmd5, cwd=project_root)
-            if not success5:
-                self.app.root.after(0, lambda: self.log("extract_prompts.py 执行失败"))
-                self.app.root.after(0, lambda: self.align_btn.config(state='normal', text="生成视频提示词"))
-                return
+            # ===== 以下内容已注释，不再执行翻译步骤 =====
+            # self.log("开始提取并翻译提示词...")
+            # cmd5 = [sys.executable, os.path.join(project_root, "core", "extract_prompts.py"), self.work_dir]
+            # rc5, success5 = run_cmd(cmd5, cwd=project_root)
+            # if not success5:
+            #     self.app.root.after(0, lambda: self.log("extract_prompts.py 执行失败"))
+            #     self.app.root.after(0, lambda: self.align_btn.config(state='normal', text="生成视频提示词"))
+            #     return
+            # =============================================
             self.app.root.after(0, lambda: self.log("视频提示词生成完成，可在视频模块中查看"))
             self.app.root.after(0, self._refresh_shots_info)
             self.app.root.after(0, lambda: self.align_btn.config(state='normal', text="生成视频提示词"))
@@ -320,9 +327,15 @@ class AudioPanel(ttk.Frame):
             print(timestamp + msg)
 
     def _on_retake_confirm(self, original_index, audio_path, duration, new_text):
-        """重录确认后更新原片段"""
         for seg in self.segments:
             if seg['index'] == original_index:
+                # 如果当前播放的就是这个片段，立即停止并卸载文件
+                if self.current_playing == seg.get('audio_file'):
+                    self.playback.stop()
+                    self.current_playing = None
+                    self.play_pause_btn.config(text="▶ 播放")
+                    self.progress_scale.set(0)
+                # 更新片段信息
                 seg['audio_file'] = audio_path
                 seg['duration'] = duration
                 seg['text'] = new_text
@@ -350,11 +363,14 @@ class AudioPanel(ttk.Frame):
         self.ref_audio_filename = self.reference_manager.get_ref_audio_filename()
         self.ref_text = self.reference_manager.get_ref_text()
 
+        # 创建控制器时传入 engine 和 speed
         self.gen_controller = AudioGenerationController(
             work_dir=self.work_dir,
             ref_audio_filename=self.reference_manager.get_ref_audio_filename(),
             ref_text=self.reference_manager.get_ref_text(),
             language=self.language_var.get(),
+            engine=self.tts_engine_var.get(),
+            speed=self.speed_var.get(),
             log_callback=self.log
         )
         self.gen_controller.set_progress_callback(self._on_generation_progress)
@@ -366,7 +382,12 @@ class AudioPanel(ttk.Frame):
             self.ref_text,
             self.language_var.get(),
             self.log,
-            self.play_audio
+            self.play_audio,
+            engine=self.tts_engine_var.get(),
+            speed=self.speed_var.get(),
+            get_ref_audio_filename=lambda: self.ref_audio_filename,
+            stop_playback_callback=lambda: self.playback.stop(),
+            get_speed=lambda: self.speed_var.get()   # 新增
         )
         self.retake_manager.set_retake_scrollable(self.retake_scrollable)
         self.retake_manager.on_segment_updated = self._on_retake_confirm
@@ -443,6 +464,14 @@ class AudioPanel(ttk.Frame):
             self.log("字幕生成失败，请检查日志")
             messagebox.showerror("错误", "字幕生成失败，请查看日志")
 
+    # ---------- 引擎切换回调 ----------
+    def _on_engine_change(self, event=None):
+        if self.tts_engine_var.get() == "omnivoice":
+            self.speed_frame.pack(fill='x', pady=2, before=self.row2)
+        else:
+            self.speed_frame.pack_forget()
+
+    # ---------- 界面构建 ----------
     def create_widgets(self):
         control_frame = ttk.LabelFrame(self, text="音频生成控制", padding=5)
         control_frame.pack(fill='x', padx=5, pady=5)
@@ -457,19 +486,45 @@ class AudioPanel(ttk.Frame):
         self.ai_gen_btn = ttk.Button(row1, text="AI生成", command=self.ai_generate_audio)
         self.ai_gen_btn.pack(side='left', padx=2)
 
-        row2 = ttk.Frame(control_frame)
-        row2.pack(fill='x', pady=5)
-        self.gen_seg_btn = ttk.Button(row2, text="段落自动润色", command=self.generate_segments_manual)
+        # 引擎选择行
+        row_engine = ttk.Frame(control_frame)
+        row_engine.pack(fill='x', pady=2)
+        ttk.Label(row_engine, text="TTS引擎:").pack(side='left', padx=5)
+        engine_combo = ttk.Combobox(row_engine, textvariable=self.tts_engine_var,
+                                    values=["fish", "omnivoice"], state="readonly", width=10)
+        engine_combo.pack(side='left', padx=5)
+        engine_combo.bind('<<ComboboxSelected>>', self._on_engine_change)
+
+        # 语速控件（默认隐藏，OmniVoice 时显示）
+        self.speed_frame = ttk.Frame(control_frame)
+        self.speed_frame.pack(fill='x', pady=2)
+        ttk.Label(self.speed_frame, text="语速:").pack(side='left', padx=5)
+        self.speed_scale = ttk.Scale(self.speed_frame, from_=0.5, to=2.0, variable=self.speed_var,
+                                     orient='horizontal', length=200)
+        self.speed_scale.pack(side='left', padx=5)
+        self.speed_label = ttk.Label(self.speed_frame, text="1.0x")
+        self.speed_label.pack(side='left')
+
+        def update_speed_label(*args):
+            self.speed_label.config(text=f"{self.speed_var.get():.1f}x")
+        self.speed_var.trace('w', update_speed_label)
+        self.speed_frame.pack_forget()  # 初始隐藏
+
+        # 保存 row2 的引用，供 _on_engine_change 使用
+        self.row2 = ttk.Frame(control_frame)
+        self.row2.pack(fill='x', pady=5)
+        self.gen_seg_btn = ttk.Button(self.row2, text="段落自动润色", command=self.generate_segments_manual)
         self.gen_seg_btn.pack(side='left', padx=2)
-        self.start_btn = ttk.Button(row2, text="开始生成音频", command=self.start_generation)
+        self.start_btn = ttk.Button(self.row2, text="开始生成音频", command=self.start_generation)
         self.start_btn.pack(side='left', padx=2)
-        self.stop_btn = ttk.Button(row2, text="停止生成音频", command=self.stop_generation, state='disabled')
+        self.stop_btn = ttk.Button(self.row2, text="停止生成音频", command=self.stop_generation, state='disabled')
         self.stop_btn.pack(side='left', padx=2)
-        self.align_btn = ttk.Button(row2, text="生成视频提示词", command=self.auto_align_duration)
+        self.align_btn = ttk.Button(self.row2, text="生成视频提示词", command=self.auto_align_duration)
         self.align_btn.pack(side='left', padx=2)
-        self.advanced_btn = ttk.Button(row2, text="▼ 高级选项", command=self.show_advanced_dialog)
+        self.advanced_btn = ttk.Button(self.row2, text="▼ 高级选项", command=self.show_advanced_dialog)
         self.advanced_btn.pack(side='right', padx=5)
 
+        # 段落列表区域
         list_frame = ttk.LabelFrame(self, text="段落列表", padding=5)
         list_frame.pack(side='top', fill='both', expand=True, padx=5, pady=5)
 
@@ -531,12 +586,14 @@ class AudioPanel(ttk.Frame):
         self.generate_subtitle_btn.pack(side='left', padx=5)
 
         def _on_mousewheel(event):
-            self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
         self._on_mousewheel = _on_mousewheel
         self.canvas.bind("<MouseWheel>", self._on_mousewheel)
         self.canvas.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-1, "units"))
         self.canvas.bind("<Button-5>", lambda e: self.canvas.yview_scroll(1, "units"))
         self.scrollable_frame.bind("<MouseWheel>", self._on_mousewheel)
+        self._on_engine_change()
 
     def play_final_audio(self):
         final_audio_path = os.path.join(self.work_dir, "final_audio.mp3")
@@ -593,14 +650,23 @@ class AudioPanel(ttk.Frame):
         if not file_path:
             return
 
-        # 更新界面显示路径
         self.ref_audio_path.set(file_path)
-        self.log("正在上传参考音频并提取文本，请稍候...")
+        self._save_local_path_to_cache(file_path)   # 新增：保存本地路径到缓存
 
+        # OmniVoice 引擎：无需转录，仅保存路径
+        if self.tts_engine_var.get() == "omnivoice":
+            self.ref_audio_filename = None
+            self.ref_text = ""
+            if self.retake_manager:
+                self.retake_manager.ref_audio_filename = None
+            self.log("参考音频已选择（OmniVoice 模式，无需转录）")
+            return
+
+        # Fish 引擎：上传并转录
+        self.log("正在上传参考音频并提取文本，请稍候...")
         def task():
             success = self.reference_manager.set_from_local(file_path)
             self.after(0, lambda: self._on_ref_audio_uploaded(success, file_path))
-
         threading.Thread(target=task, daemon=True).start()
 
     def _on_ref_audio_uploaded(self, success, file_path):
@@ -610,6 +676,8 @@ class AudioPanel(ttk.Frame):
             self.ref_audio_filename = self.reference_manager.get_ref_audio_filename()
             self.ref_text = self.reference_manager.get_ref_text()
             self.log("参考音频已成功上传并提取文本")
+            # 保存本地路径到缓存
+            self._save_local_path_to_cache(file_path)
         else:
             self.log("参考音频上传或文本提取失败")
 
@@ -724,7 +792,17 @@ class AudioPanel(ttk.Frame):
             if not path:
                 messagebox.showwarning("提示", "尚未生成或生成失败，无法确认")
                 return
+            self._save_local_path_to_cache(path)   # 新增：保存本地路径
             win.destroy()
+            # OmniVoice 引擎：仅保存路径
+            self._save_local_path_to_cache(path)
+            if self.tts_engine_var.get() == "omnivoice":
+                self.ref_audio_path.set(path)
+                self.ref_audio_filename = None
+                self.ref_text = ""
+                self.log("参考音频已选择（OmniVoice 模式，无需转录）")
+                return
+            # Fish 引擎：上传并转录
             self.log("正在上传参考音频并提取文本...")
             def task():
                 success = self.reference_manager.set_from_local(path)
@@ -758,7 +836,6 @@ class AudioPanel(ttk.Frame):
             answer = messagebox.askyesno("确认", "已有润色后的段落，重新润色将覆盖现有音频片段，是否继续？\n")
             if not answer:
                 return
-            # 删除旧文件
             labeled_path = os.path.join(self.work_dir, "labeled_text.txt")
             json_path = os.path.join(self.work_dir, "segments_info.json")
             if os.path.exists(labeled_path):
@@ -780,7 +857,8 @@ class AudioPanel(ttk.Frame):
             else:
                 self.app.root.after(0, lambda: self.log("段落润色失败"))
 
-        self.segment_labeler.generate_segments(self.paragraphs, on_complete)
+        # 传入当前选择的引擎
+        self.segment_labeler.generate_segments(self.paragraphs, on_complete, engine=self.tts_engine_var.get())
     def load_segments_from_json(self):
         json_path = os.path.join(self.work_dir, "segments_info.json")
         if not os.path.exists(json_path):
@@ -859,18 +937,59 @@ class AudioPanel(ttk.Frame):
         if not self.segments:
             messagebox.showerror("错误", "请先生成分段")
             return
-        if not self.ref_audio_path.get():
-            messagebox.showerror("错误", "请先选择或生成参考音频")
-            return
+        # 自动恢复上次使用的参考音频路径
+        cache_path = os.path.join(work_dir, "reference_cache.json")
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    cache = json.load(f)
+                # 恢复本地路径（若存在且文件未丢失）
+                local_path = cache.get("local_path")
+                if local_path and os.path.exists(local_path):
+                    self.ref_audio_path.set(local_path)
+                    self.log(f"已从缓存恢复参考音频路径: {local_path}")
+                else:
+                    # 可选：若路径无效，可尝试根据 audio_filename 模糊查找，但您已明确不需要
+                    pass
+                # 原有 audio_filename 和 reference_text 恢复逻辑保持不变
+                self.ref_audio_filename = cache.get("audio_filename")
+                self.ref_text = cache.get("reference_text")
+                if self.ref_audio_filename and self.ref_text:
+                    self.log("已从缓存加载参考音频信息")
+            except Exception as e:
+                self.log(f"加载参考缓存失败: {e}")
         if self.running:
             self.log("已有生成任务在运行")
             return
+        # OmniVoice 引擎：确保参考音频已上传到 ComfyUI 服务器
+        if self.tts_engine_var.get() == "omnivoice" and not self.ref_audio_filename:
+            ref_path = self.ref_audio_path.get()
+            if not ref_path:
+                messagebox.showerror("错误", "请先选择参考音频")
+                return
+            from core.omnivoice_tts import upload_audio
+            api_url = config_manager.COMFYUI_API_URL
+            self.log("正在上传参考音频到 OmniVoice 服务器...")
+            uploaded = upload_audio(api_url, ref_path)
+            if not uploaded:
+                messagebox.showerror("错误", "参考音频上传失败，请检查网络或地址")
+                return
+            self.ref_audio_filename = uploaded
+            self.gen_controller.ref_audio_filename = uploaded   # 关键：更新控制器中的文件名
+            self.retake_manager.ref_audio_filename = uploaded
+            self.log(f"参考音频已上传，服务器文件名: {uploaded}")
+
         if self.gen_controller:
-            self.ref_audio_filename = self.reference_manager.get_ref_audio_filename()
-            self.ref_text = self.reference_manager.get_ref_text()
-            self.gen_controller.ref_audio_filename = self.ref_audio_filename
-            self.gen_controller.ref_text = self.ref_text
-            self.gen_controller.language = self.language_var.get()
+            # OmniVoice 引擎在上传后已经设置了 ref_audio_filename，无需再从 reference_manager 获取
+            if self.tts_engine_var.get() != "omnivoice":
+                self.ref_audio_filename = self.reference_manager.get_ref_audio_filename()
+                self.ref_text = self.reference_manager.get_ref_text()
+                self.gen_controller.ref_audio_filename = self.ref_audio_filename
+                self.gen_controller.ref_text = self.ref_text
+                self.gen_controller.language = self.language_var.get()
+            # 以下两行对两个引擎都有效
+            self.gen_controller.engine = self.tts_engine_var.get()
+            self.gen_controller.speed = self.speed_var.get()
         else:
             self.log("错误：控制器未初始化")
             return
@@ -984,6 +1103,26 @@ class AudioPanel(ttk.Frame):
         self.time_label.config(text="00:00 / 00:00")
 
     def request_retake(self, idx):
+        # 如果是 OmniVoice 且尚未上传参考音频，则先上传
+        if self.tts_engine_var.get() == "omnivoice" and not self.ref_audio_filename:
+            ref_path = self.ref_audio_path.get()
+            if not ref_path:
+                messagebox.showerror("错误", "请先选择参考音频")
+                return
+            from core.omnivoice_tts import upload_audio
+            api_url = config_manager.COMFYUI_API_URL
+            self.log("正在上传参考音频到 OmniVoice 服务器...")
+            uploaded = upload_audio(api_url, ref_path)
+            if not uploaded:
+                messagebox.showerror("错误", "参考音频上传失败，请检查网络或地址")
+                return
+            self.ref_audio_filename = uploaded
+            if self.gen_controller:
+                self.gen_controller.ref_audio_filename = uploaded
+            if self.retake_manager:
+                self.retake_manager.ref_audio_filename = uploaded
+            self.log(f"参考音频已上传，服务器文件名: {uploaded}")
+        
         for seg in self.segments:
             if seg.get('index') == idx:
                 self._show_retake_dialog(seg['index'], seg)
@@ -1052,6 +1191,20 @@ class AudioPanel(ttk.Frame):
             self.final_play_btn.config(state='normal')
         else:
             self.log("最终音频合成失败")
+
+    def _save_local_path_to_cache(self, local_path):
+        """将参考音频本地路径保存到 reference_cache.json"""
+        cache_path = os.path.join(self.work_dir, "reference_cache.json")
+        try:
+            cache = {}
+            if os.path.exists(cache_path):
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    cache = json.load(f)
+            cache['local_path'] = local_path
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(cache, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.log(f"保存本地路径到缓存失败: {e}")
     def stop_generation(self):
         if self.gen_controller:
             self.gen_controller.cancel_all()

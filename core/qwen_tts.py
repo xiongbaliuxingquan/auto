@@ -12,7 +12,7 @@ from typing import Optional
 from core.fish_tts import submit_workflow, wait_for_audio, download_audio
 from utils import config_manager
 
-API_URL = config_manager.COMFYUI_API_URL
+API_URL = config_manager.QWENTTS_API_URL
 QWEN_TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "workflow_templates", "QwenTTS.json")
 
 def sanitize_filename(text):
@@ -78,6 +78,8 @@ def generate_reference_audio(text: str, voice_description: str, work_dir: str) -
     # 生成唯一文件名
     next_idx = get_next_preview_index(work_dir)
     desc_sanitized = sanitize_filename(voice_description)
+    if len(desc_sanitized) > 20:
+        desc_sanitized = desc_sanitized[:20]
     if desc_sanitized:
         filename = f"预览_{next_idx:02d}_{desc_sanitized}.mp3"
     else:
