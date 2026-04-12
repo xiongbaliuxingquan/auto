@@ -238,32 +238,27 @@ def generate_single_video(
     # 下载视频
     if log_callback:
         log_callback("下载视频文件...")
-        if download_video(api_url, node_out, temp_video_path):
-            from utils.audio_utils import get_audio_duration   # 确保已导入
-            actual_duration = get_audio_duration(temp_video_path)
-            if log_callback:
-                log_callback(f"下载完成，实际视频时长: {actual_duration:.2f} 秒")
-
-            if auto_trim:
-                trim_target = target_duration if target_duration is not None else duration
-                if log_callback:
-                    log_callback(f"裁剪视频至目标时长 {trim_target} 秒...")
-                if trim_video(temp_video_path, final_video_path, trim_target):
-                    trimmed_duration = get_audio_duration(final_video_path)
-                    os.remove(temp_video_path)
-                    if log_callback:
-                        log_callback(f"裁剪完成，最终视频时长: {trimmed_duration:.2f} 秒，已保存: {final_video_path}")
-                    return final_video_path
-                else:
-                    os.rename(temp_video_path, final_video_path)
-                    if log_callback:
-                        log_callback(f"裁剪失败，保留原始视频: {final_video_path} (时长 {actual_duration:.2f} 秒)")
-                    return final_video_path
-            else:
-                os.rename(temp_video_path, final_video_path)
-                if log_callback:
-                    log_callback(f"镜头 {shot_id} 视频已保存（未裁剪）: {final_video_path} (时长 {actual_duration:.2f} 秒)")
-                return final_video_path
+    if download_video(api_url, node_out, temp_video_path):
+        # 若目标文件存在，尝试删除，若被占用则弹出提示等待用户关闭播放器后重试
+        if os.path.exists(final_video_path):
+            import tkinter.messagebox as messagebox
+            while True:
+                try:
+                    os.remove(final_video_path)
+                    break
+                except PermissionError:
+                    user_choice = messagebox.askretrycancel(
+                        "文件被占用",
+                        f"文件 '{os.path.basename(final_video_path)}' 正被其他程序占用（可能是视频播放器）。\n"
+                        "请关闭播放器后点击「重试」，或点击「取消」终止本次生成。"
+                    )
+                    if not user_choice:
+                        os.remove(temp_video_path)  # 清理临时文件
+                        raise Exception("用户取消了操作")
+        os.rename(temp_video_path, final_video_path)
+        if log_callback:
+            log_callback(f"镜头 {shot_id} 视频已保存: {final_video_path}")
+        return final_video_path
     else:
         raise Exception("下载视频失败")
 

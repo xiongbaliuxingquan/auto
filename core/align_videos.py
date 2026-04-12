@@ -37,17 +37,16 @@ def get_video_duration(video_path, ffmpeg_path):
 
 def trim_video(input_path, output_path, start_sec, duration_sec, ffmpeg_path):
     """
-    裁剪视频，从 start_sec 开始，持续 duration_sec 秒。
-    使用快速复制，通过 -ss 放在 -i 之前 + -copyts 确保起始点接近，避免关键帧对齐导致的长度偏差。
+    极简流复制裁剪：仅截取前 target_frames 帧，不重新编码，不改变时间戳。
     """
+    target_frames = round(duration_sec * 24)
     cmd = [
-        ffmpeg_path, '-ss', str(start_sec),
+        ffmpeg_path, '-y',
         '-i', input_path,
-        '-t', str(duration_sec),
+        '-frames:v', str(target_frames),
         '-c', 'copy',
-        '-copyts',
-        '-avoid_negative_ts', 'make_zero',
-        '-y', output_path
+        '-map', '0',
+        output_path
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
     if result.returncode == 0:
@@ -128,10 +127,9 @@ def main(work_dir, video_dir=None, log_callback=None):
             log(f"  实际时长 <= 目标时长，直接复制原文件。")
             shutil.copy2(video_path, out_path)
         else:
-            diff = actual_sec - target_sec
-            start_sec = diff / 2.0
-            log(f"  需要裁剪，多余 {diff:.3f}s，起始点 {start_sec:.3f}s，时长 {target_sec:.3f}s")
-            success = trim_video(video_path, out_path, start_sec, target_sec, ffmpeg_path)
+            # 改为只从尾部裁剪，起始点固定为0，时长即为目标时长
+            log(f"  需要裁剪，多余 {actual_sec - target_sec:.3f}s，将丢弃尾部多余部分")
+            success = trim_video(video_path, out_path, 0.0, target_sec, ffmpeg_path)
             if success:
                 log(f"  裁剪成功: {out_path}")
             else:

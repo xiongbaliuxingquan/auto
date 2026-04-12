@@ -43,25 +43,6 @@ class StandardMode:
         self.preview_btn = tk.Button(self.button_frame, text="预览段落", command=self.app.preview_paragraphs, width=10, state='disabled')
         self.preview_btn.pack(side='left', padx=2)
 
-        # 其他按钮（初始禁用）
-        self.run_workflow_btn = tk.Button(self.button_frame, text="运行工作流", state='disabled',
-                                        command=self.app.run_workflow, width=12)
-        self.run_workflow_btn.pack(side='left', padx=2)
-
-        self.select_edit_btn = tk.Button(self.button_frame, text="选择或编辑提示词", state='disabled',
-                                        command=self.app.open_shot_editor, width=16)
-        self.select_edit_btn.pack(side='left', padx=2)
-
-        self.first_frame_btn = tk.Button(self.button_frame, text="生成首帧提示词", state='disabled',
-                                        command=self.app.run_first_frame_generation, width=14)
-        self.first_frame_btn.pack(side='left', padx=2)
-
-        self.align_btn = tk.Button(self.button_frame, text="视频精确对齐", command=self.app.run_video_align, width=14)
-        self.align_btn.pack(side='left', padx=2)
-
-        self.upload_subtitle_btn = tk.Button(self.button_frame, text="上传字幕测试", command=self.app.upload_subtitle, width=12, state='normal')
-        self.upload_subtitle_btn.pack(side='left', padx=2)
-
         # 其他按钮（设置、历史、日志、系统医生、继续）保持不变
         self.settings_btn = tk.Button(self.button_frame, text="设置", command=self.app.open_settings, width=6)
         self.settings_btn.pack(side='left', padx=2)

@@ -117,6 +117,9 @@ class App:
         self.image_panel.pack(fill='both', expand=True)
         self.image_frame.pack_forget()
 
+        # 视频模块
+        self.create_video_panel()
+
         # 故事模块：包含标准模式和一键成片面板
         self.standard_mode = StandardMode(self.story_frame, self, ASPECT_RATIO_MAP)
         self.simple_mode = SimpleMode(self.story_frame, self)
@@ -128,9 +131,6 @@ class App:
         # 音频模块
         self.audio_panel = AudioPanel(self.audio_frame, work_dir=None, app=self, log_callback=self.log)
         self.audio_panel.on_subtitle_generated = self.on_subtitle_generated
-
-        # 视频模块
-        self.create_video_panel()
 
         # 剪辑模块（占位）
         self.create_edit_panel()
@@ -217,9 +217,6 @@ class App:
     def on_subtitle_generated(self, srt_path):
         """字幕生成后自动设置为有字幕模式"""
         self.toolbar.subtitle_mode_var.set("有字幕")
-        self.standard_mode.upload_subtitle_btn.config(state='disabled')
-        # self.standard_mode.apply_duration_btn.config(state='normal')
-        # self.standard_mode.optimize_and_continue_btn.config(state='normal')
         self.log("字幕已生成，可点击「应用字幕时长」或「优化并继续」")
 
     # ---------- 侧边栏 ----------
@@ -285,22 +282,37 @@ class App:
             script = self.simple_mode.story_tab.text_widget.get('1.0', 'end-1c').strip()
         self.audio_panel.set_script(script)
 
-    # ---------- 视频模块 ----------
     def create_video_panel(self):
         """创建视频模块控件（仅保留按钮和视频列表）"""
-        # 按钮区域
         btn_frame = ttk.Frame(self.video_frame)
         btn_frame.pack(fill='x', padx=5, pady=5)
 
-        ttk.Button(btn_frame, text="运行工作流", command=self.run_workflow, width=12).pack(side='left', padx=2)
-        ttk.Button(btn_frame, text="选择或编辑视频提示词", command=self.open_shot_editor, width=16).pack(side='left', padx=2)
-        ttk.Button(btn_frame, text="视频精确裁剪", command=self.run_video_align, width=12).pack(side='left', padx=2)
+        self.run_workflow_btn = ttk.Button(btn_frame, text="运行工作流", command=self.run_workflow, width=12)
+        self.run_workflow_btn.pack(side='left', padx=2)
+
+        self.edit_prompts_btn = ttk.Button(btn_frame, text="选择或编辑视频提示词", command=self.open_shot_editor, width=16)
+        self.edit_prompts_btn.pack(side='left', padx=2)
+
+        self.align_btn = ttk.Button(btn_frame, text="视频精确裁剪", command=self.run_video_align, width=12)
+        self.align_btn.pack(side='left', padx=2)
 
         self.continue_btn = ttk.Button(btn_frame, text="继续", command=self.continue_generation, state='disabled', width=8)
         self.continue_btn.pack(side='left', padx=2)
 
+        # 先创建视频面板
         from gui.standard_video_panel import StandardVideoPanel
         self.video_panel = StandardVideoPanel(self.video_frame, self)
+
+        # 再添加数字人按钮
+        ttk.Label(btn_frame, text="| 后续数字人功能可选→", foreground='gray').pack(side='left', padx=5)
+        self.upload_dh_img_btn = ttk.Button(btn_frame, text="上传数字人图片", command=self.video_panel.upload_digital_human_image, width=14)
+        self.upload_dh_img_btn.pack(side='left', padx=2)
+        self.make_dh_img_btn = ttk.Button(btn_frame, text="制作数字人图片", command=self.video_panel.make_digital_human_image, width=14)
+        self.make_dh_img_btn.pack(side='left', padx=2)
+        self.start_dh_btn = ttk.Button(btn_frame, text="开始制作数字人", command=self.video_panel.start_digital_human, width=14, state='disabled')
+        self.start_dh_btn.pack(side='left', padx=2)
+
+        # 最后将视频面板的框架布局
         self.video_panel.frame.pack(fill='both', expand=True, padx=5, pady=5)
 
     def create_edit_panel(self):
@@ -454,11 +466,8 @@ class App:
 
     def on_subtitle_mode_change(self, event=None):
         mode = self.toolbar.subtitle_mode_var.get()
-        # 由于字幕功能仍在标准模式中，此处保留
-        if mode == "有字幕":
-            self.standard_mode.upload_subtitle_btn.config(state='normal')
-        else:
-            self.standard_mode.upload_subtitle_btn.config(state='disabled')
+        # 字幕功能已迁移至视频面板，此处不再控制按钮状态
+        if mode == "无字幕":
             if self.temp_subtitle_path and os.path.exists(self.temp_subtitle_path):
                 try:
                     os.remove(self.temp_subtitle_path)
@@ -545,16 +554,10 @@ class App:
             srt_path = os.path.join(self.work_dir, "input.srt")
             if os.path.exists(srt_path):
                 self.toolbar.subtitle_mode_var.set("有字幕")
-                self.standard_mode.upload_subtitle_btn.config(state='disabled')
                 # 若有字幕，可以启用对齐等按钮
-                # self.standard_mode.apply_duration_btn.config(state='normal')
-                # self.standard_mode.optimize_and_continue_btn.config(state='normal')
                 self.log("检测到已存在的字幕文件，可点击「应用字幕时长」或「优化并继续」")
             else:
                 self.toolbar.subtitle_mode_var.set("无字幕")
-                self.standard_mode.upload_subtitle_btn.config(state='normal')
-                # self.standard_mode.apply_duration_btn.config(state='disabled')
-                # self.standard_mode.optimize_and_continue_btn.config(state='disabled')
 
             # 尝试从易读版分镜文件获取镜头信息（如果有）
             temp_manager = comfyui_manager.ComfyUIManager("", "")
@@ -562,31 +565,23 @@ class App:
             if readable_file:
                 self.shots_info = temp_manager.get_shots_info(readable_file)
                 if self.shots_info:
-                    self.standard_mode.select_edit_btn.config(state='normal')
                     self.log(f"找到 {len(self.shots_info)} 个镜头（来自易读版），可点击「选择或编辑提示词」进行筛选")
                 else:
                     self.shots_info = None
-                    self.standard_mode.select_edit_btn.config(state='disabled')
             else:
                 # 如果没有易读版，尝试从 shots.txt 解析（旧项目）
                 if os.path.exists(shots_path):
                     self.shots_info = self._parse_shots_from_txt(shots_path)
                     if self.shots_info:
-                        self.standard_mode.select_edit_btn.config(state='normal')
                         self.log(f"找到 {len(self.shots_info)} 个镜头（来自 shots.txt），但尚未生成详细分镜，编辑功能可能受限")
                     else:
                         self.shots_info = None
-                        self.standard_mode.select_edit_btn.config(state='disabled')
                 else:
                     # 新流程：只有 paragraphs.json，尚未生成分镜
                     self.shots_info = None
-                    self.standard_mode.select_edit_btn.config(state='disabled')
                     self.log("未找到分镜文件，请先通过音频模块生成字幕和分镜。")
 
             # 根据项目类型启用对应按钮
-            self.standard_mode.run_workflow_btn.config(state='normal', text="运行工作流")
-            self.standard_mode.first_frame_btn.config(state='normal')
-            self.standard_mode.align_btn.config(state='normal')
             self.log(f"已加载历史工作目录: {self.work_dir}")
 
             # 加载口播稿或段落到音频面板
@@ -684,18 +679,13 @@ class App:
         self.shots_info = None
         self.selected_shots_ids = None
         self.edited_prompts = {}
-        self.standard_mode.select_edit_btn.config(state='disabled')
 
         if subtitle_mode == "有字幕" and self.temp_subtitle_path and os.path.exists(self.temp_subtitle_path):
             dest = os.path.join(self.work_dir, "input.srt")
             shutil.move(self.temp_subtitle_path, dest)
             self.temp_subtitle_path = None
             self.log(f"字幕文件已移动到: {dest}")
-            # self.standard_mode.apply_duration_btn.config(state='normal')
-            # self.standard_mode.optimize_and_continue_btn.config(state='normal')
         else:
-            # self.standard_mode.apply_duration_btn.config(state='disabled')
-            # self.standard_mode.optimize_and_continue_btn.config(state='disabled')
             pass
 
         persona = self.standard_mode.text_widgets['persona'].get("1.0", 'end-1c').strip()
@@ -729,126 +719,6 @@ class App:
         thread = threading.Thread(target=self._run_steps_thread, args=(input_filename,))
         thread.daemon = True
         thread.start()
-
-    def upload_subtitle(self):
-        file_path = filedialog.askopenfilename(
-            title="选择字幕文件",
-            filetypes=[("SRT files", "*.srt"), ("All files", "*.*")]
-        )
-        if not file_path:
-            return
-        try:
-            if self.work_dir and os.path.exists(self.work_dir):
-                dest = os.path.join(self.work_dir, "input.srt")
-                shutil.copy2(file_path, dest)
-                self.log(f"字幕文件已复制至: {dest}")
-                # self.standard_mode.apply_duration_btn.config(state='normal')
-                # self.standard_mode.optimize_and_continue_btn.config(state='normal')
-                messagebox.showinfo("成功", "字幕上传成功，可点击「应用字幕时长」或「优化并继续」")
-            else:
-                base_name = os.path.basename(file_path)
-                temp_dest = os.path.join(self.temp_dir, base_name)
-                if os.path.exists(temp_dest):
-                    name, ext = os.path.splitext(base_name)
-                    temp_dest = os.path.join(self.temp_dir, f"{name}_{int(time.time())}{ext}")
-                shutil.copy2(file_path, temp_dest)
-                self.temp_subtitle_path = temp_dest
-                self.log(f"字幕文件已暂存至临时目录: {temp_dest}")
-                if not self.toolbar.subtitle_mode_var.get():
-                    self.toolbar.subtitle_mode_var.set("有字幕")
-                    self.standard_mode.upload_subtitle_btn.config(state='normal')
-                messagebox.showinfo("成功", "字幕已暂存，开始处理时将自动移动到工作目录。")
-        except Exception as e:
-            messagebox.showerror("错误", f"上传失败: {e}")
-
-    def apply_subtitle_duration(self):
-        if not self.work_dir:
-            messagebox.showerror("错误", "工作目录不存在")
-            return
-        srt_path = os.path.join(self.work_dir, "input.srt")
-        if not os.path.exists(srt_path):
-            messagebox.showerror("错误", "未找到字幕文件，请先上传")
-            return
-
-        # self.standard_mode.apply_duration_btn.config(state='disabled', text="优化中...")
-        self.log("\n========== 应用字幕优化镜头 ==========")
-
-        def run_task():
-            try:
-                script_path = os.path.join(os.path.dirname(__file__), "core", "refine_shots_by_srt.py")
-                cmd = [sys.executable, '-u', script_path, self.work_dir]
-                rc, success = self.runner.run(cmd)
-                if success:
-                    refined_path = os.path.join(self.work_dir, "input_refined.json")
-                    if os.path.exists(refined_path):
-                        self.root.after(0, lambda: self.log("优化完成，生成 input_refined.json"))
-                    else:
-                        self.root.after(0, lambda: self.log("优化执行完成但未找到输出文件"))
-                else:
-                    self.root.after(0, lambda: self.log("字幕优化失败，请检查日志"))
-            except Exception as e:
-                self.root.after(0, lambda: self.log(f"优化过程异常: {e}"))
-            finally:
-                # self.root.after(0, lambda: self.standard_mode.apply_duration_btn.config(state='normal', text="应用字幕时长"))
-                pass
-        thread = threading.Thread(target=run_task)
-        thread.daemon = True
-        thread.start()
-
-    def optimize_and_continue(self):
-        if not self.work_dir:
-            messagebox.showerror("错误", "工作目录不存在")
-            return
-
-        refined_path = os.path.join(self.work_dir, "input_refined.json")
-        if not os.path.exists(refined_path):
-            self.log("未找到优化文件，正在运行字幕优化...")
-            script_path = os.path.join(os.path.dirname(__file__), "core", "refine_shots_by_srt.py")
-            cmd = [sys.executable, '-u', script_path, self.work_dir]
-            rc, success = self.runner.run(cmd)
-            if not success or not os.path.exists(refined_path):
-                self.log("字幕优化失败")
-                messagebox.showerror("错误", "优化失败，请检查日志")
-                return
-            self.log("字幕优化完成")
-
-        answer = messagebox.askyesno("替换确认",
-                                     "将用优化后的文件 input_refined.json 替换原有的 input.json，并继续生成分镜和提示词。\n是否继续？")
-        if not answer:
-            return
-
-        shutil.copy2(refined_path, os.path.join(self.work_dir, "input.json"))
-        self.log("已用优化文件替换 input.json")
-
-        self.log("\n========== 继续生成分镜和提示词 ==========")
-        project_root = os.path.dirname(__file__)
-        steps = [
-            (os.path.join(project_root, "core", "auto_split_deepseek.py"), [self.work_dir]),
-            (os.path.join(project_root, "core", "extract_prompts.py"), [self.work_dir])
-        ]
-        for script, args in steps:
-            cmd = [sys.executable, script] + args
-            rc, success = self.runner.run(cmd, cwd=project_root)
-            if not success:
-                self.log(f"步骤 {os.path.basename(script)} 失败")
-                messagebox.showerror("错误", f"步骤 {os.path.basename(script)} 执行失败")
-                return
-        self.log("分镜和提示词生成完成")
-
-        temp_manager = comfyui_manager.ComfyUIManager("", "")
-        readable_file = temp_manager.get_latest_readable_file(self.work_dir)
-        shots_info = temp_manager.get_shots_info(readable_file) if readable_file else None
-        self._update_after_optimize(shots_info)
-
-    def _update_after_optimize(self, shots_info):
-        if shots_info:
-            self.shots_info = shots_info
-            self.standard_mode.select_edit_btn.config(state='normal')
-            self.log(f"找到 {len(shots_info)} 个镜头，可点击「选择或编辑提示词」")
-        self.standard_mode.run_workflow_btn.config(state='normal', text="运行工作流 (20s)")
-        self.standard_mode.first_frame_btn.config(state='normal')
-        self.timer.start(20000)
-        messagebox.showinfo("成功", "优化并继续完成，可进行后续操作")
 
     def split_paragraphs(self):
         title = self.toolbar.title_entry.get().strip()
@@ -966,9 +836,6 @@ class App:
         tk.Button(btn_frame, text="保存", command=save_paragraphs).pack(side='left', padx=5)
         tk.Button(btn_frame, text="取消", command=win.destroy).pack(side='left', padx=5)
 
-    # def _reset_optimize_buttons(self):
-        # self.standard_mode.optimize_and_continue_btn.config(state='normal', text="优化并继续")
-        # self.standard_mode.apply_duration_btn.config(state='normal')
 
     def _run_steps_thread(self, input_filename):
         success = self.step_mgr.run_steps(self.work_dir, self.story_title, input_filename)
@@ -985,18 +852,20 @@ class App:
         self.processing = False
         self.timer.stop()
         self.standard_mode.split_btn.config(state='disabled')
-        self.standard_mode.run_workflow_btn.config(state='disabled')
-        self.standard_mode.first_frame_btn.config(state='disabled')
-        self.standard_mode.select_edit_btn.config(state='disabled')
-        self.standard_mode.upload_subtitle_btn.config(state='disabled')
+        
+        # 安全禁用视频面板相关按钮（避免 None 引用）
+        for btn_name in ['run_workflow_btn', 'edit_prompts_btn', 'align_btn', 'continue_btn',
+                         'upload_dh_img_btn', 'make_dh_img_btn', 'start_dh_btn']:
+            btn = getattr(self, btn_name, None)
+            if btn is not None:
+                btn.config(state='disabled')
+        
         messagebox.showerror("致命错误", f"处理过程中发生错误，已暂停。\n\n错误详情：{error_msg}")
         self.status_label.config(text="已暂停（发生错误）")
 
     def processing_done(self):
         self.processing = False
         self.status_label.config(text="倒计时：20秒后自动运行工作流")
-        self.standard_mode.run_workflow_btn.config(state='normal', text="运行工作流 (20s)")
-        self.standard_mode.first_frame_btn.config(state='normal')
         
         # 强制重新加载镜头信息（从易读版文件）
         temp_manager = comfyui_manager.ComfyUIManager("", "")
@@ -1004,7 +873,6 @@ class App:
         if readable_file:
             self.shots_info = temp_manager.get_shots_info(readable_file)
             if self.shots_info:
-                self.standard_mode.select_edit_btn.config(state='normal')
                 self.log(f"找到 {len(self.shots_info)} 个镜头，可点击「选择或编辑提示词」进行调整")
         
         if self.toolbar.mode_type_var.get() == "一键成片":
@@ -1078,6 +946,9 @@ class App:
             self.log("取消编辑")
 
     def run_workflow(self):
+        self.run_workflow_btn.config(state='disabled')
+        self.edit_prompts_btn.config(state='disabled')
+        self.align_btn.config(state='disabled')
         if self.toolbar.mode_var.get() == "图生视频":
             # 获取选中的镜头ID（如果有）
             selected_ids = self.selected_shots_ids if self.selected_shots_ids is not None else None
@@ -1090,9 +961,6 @@ class App:
                 selected_shots=selected_ids
             )
             # 禁用相关按钮（原有代码）
-            self.standard_mode.run_workflow_btn.config(state='disabled', text="运行工作流")
-            self.standard_mode.first_frame_btn.config(state='disabled')
-            self.standard_mode.select_edit_btn.config(state='disabled')
             self.status_label.config(text="正在生成视频...")
             self.log("\n========== 图生视频 ==========")
             return
@@ -1116,9 +984,6 @@ class App:
         if self.toolbar.mode_type_var.get() == "一键成片":
             self.simple_mode.hide_countdown()
 
-        self.standard_mode.run_workflow_btn.config(state='disabled', text="运行工作流")
-        self.standard_mode.first_frame_btn.config(state='disabled')
-        self.standard_mode.select_edit_btn.config(state='disabled')
         if self.continue_mode and self.remaining_shots:
             selected_ids = self.remaining_shots
             self.continue_btn.config(state='disabled')
@@ -1228,9 +1093,12 @@ class App:
         self.run_workflow()
 
     def workflow_done(self):
+        self.run_workflow_btn.config(state='normal')
+        self.edit_prompts_btn.config(state='normal')
+        self.align_btn.config(state='normal')
         self.status_label.config(text="全部流程完成")
         self.log("=== 全部流程完成 ===")
-        self._reset_buttons()
+        self.standard_mode.split_btn.config(state='normal')
         self.continue_mode = False
         self.remaining_shots = None
         self.continue_btn.config(state='disabled')
@@ -1242,32 +1110,12 @@ class App:
             self.video_panel.refresh()
 
     def workflow_failed(self):
+        self.run_workflow_btn.config(state='normal')
+        self.edit_prompts_btn.config(state='normal')
+        self.align_btn.config(state='normal')
         self.status_label.config(text="生成视频失败")
         self.log("=== 生成视频失败 ===")
-        self._reset_buttons()
-
-    def _reset_buttons(self):
-        self.standard_mode.split_btn.config(state='normal')  # 原 start_btn 改为 split_btn
-        self.standard_mode.run_workflow_btn.config(state='normal', text="运行工作流")
-        self.standard_mode.first_frame_btn.config(state='normal')
-        self.standard_mode.select_edit_btn.config(state='normal')
-
-    def run_first_frame_generation(self):
-        if not self.work_dir:
-            messagebox.showerror("错误", "尚未生成工作目录")
-            return
-        def thread_func():
-            self.log("\n========== 生成首帧提示词 ==========")
-            script_path = os.path.join(os.path.dirname(__file__), "core", "generate_first_frame_prompts.py")
-            cmd = [sys.executable, script_path, self.work_dir]
-            rc, success = self.runner.run(cmd)
-            if success:
-                self.log("首帧提示词生成完成")
-            else:
-                self.log("首帧提示词生成失败")
-        thread = threading.Thread(target=thread_func)
-        thread.daemon = True
-        thread.start()
+        self.standard_mode.split_btn.config(state='normal')
 
     def run_video_align(self):
         if not self.work_dir:
@@ -1280,16 +1128,6 @@ class App:
             from core import align_videos
             align_videos.main(self.work_dir, video_dir, self.log)
         threading.Thread(target=thread_func, daemon=True).start()
-
-    def on_aspect_ratio_change(self, event=None):
-        aspect = self.aspect_ratio_var.get()
-        if aspect in ASPECT_RATIO_MAP:
-            resolutions = ASPECT_RATIO_MAP[aspect]
-            self.resolution_combo['values'] = resolutions
-            if resolutions:
-                self.resolution_var.set(resolutions[0])
-            else:
-                self.resolution_var.set("")
 
 if __name__ == "__main__":
     root = tk.Tk()
